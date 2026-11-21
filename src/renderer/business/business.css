@@ -1,0 +1,386 @@
+.business-page{min-width:0;max-width:100%}
+.business-page .page-heading{margin-bottom:18px}
+.business-tabs{display:flex;gap:4px;margin-bottom:0;padding:7px 10px 0;background:#17191d;border:1px solid #343943;border-bottom:0;border-radius:8px 8px 0 0}
+.business-tabs .button{border:0;border-radius:4px 4px 0 0;background:transparent;color:#abb4c3;min-width:116px;padding:11px 17px}
+.business-tabs .button.primary{background:#242830;color:#54aaff;box-shadow:inset 0 -2px #409eff}
+.business-report{--text:#e2e7ef;--muted:#a4adbb;--line:#3b414b;--brand:#409eff;--brand-soft:#243849;background:#1d2026;color:var(--text);border:1px solid var(--line);border-top:0;border-radius:0 0 8px 8px;padding:16px 0 0;min-width:0;font-size:12px}
+.business-stores{display:flex;gap:7px;overflow:auto;padding:0 14px 12px}
+.business-stores .button{flex:none;white-space:nowrap;padding:6px 10px;background:#303640;border-color:#434b58;color:#d7e4f5}
+.business-stores .button.primary{background:#224568;border-color:#409eff;color:#91c9ff}
+.business-report .button{background:#292e37;border-color:#4b5360;color:#d7dfeb;border-radius:4px;box-shadow:none;font-size:12px;padding:7px 12px;min-height:31px}
+.business-report .button.primary{background:#337ecc;border-color:#409eff;color:white}
+.business-report .button:hover:not(:disabled){background:#35485b;border-color:#6aa7e4}
+.business-report .button.primary:hover:not(:disabled){background:#409eff}
+.business-report .button:disabled{opacity:.46}
+.business-report input,.business-report select,.business-report textarea{border:1px solid #4a515e;border-radius:4px;background:#20242b;color:#e2e7ef;font:12px/1.5 "Microsoft YaHei",sans-serif;min-height:31px;padding:5px 9px;box-sizing:border-box;color-scheme:dark}
+.business-report input::placeholder,.business-report textarea::placeholder{color:#99a2b0}
+.business-report input:focus,.business-report select:focus,.business-report textarea:focus{outline:2px solid #409eff88;outline-offset:1px}
+.business-report input:disabled,.business-report select:disabled{color:#8993a0;border-color:#3e4550;opacity:1;background:#23272e}
+.business-report .field{min-width:0;display:flex;flex-direction:row;align-items:center;gap:9px;margin:0}
+.business-report .field label{color:#c6d1e1;font-size:12px;flex-shrink:0;min-width:58px;text-align:right;margin:0;font-weight:400}
+.business-report .field input,.business-report .field select,.business-report .field textarea{min-width:0;width:100%}
+.business-filter-panel{border-block:1px solid #4a515d;background:#242830}
+.business-controls{display:flex;align-items:center;gap:17px;flex-wrap:wrap;padding:16px 16px 8px}
+.business-controls .field{min-width:210px}
+.business-controls .business-store-field{width:260px}
+.business-date-mode{display:flex;gap:5px}
+.business-month-picker{display:flex;align-items:center;gap:6px}
+.business-month-picker input{width:139px!important}
+.business-month-picker .button{white-space:nowrap;padding:5px 10px}
+.business-product-filters{display:grid;grid-template-columns:minmax(300px,1.32fr) repeat(3,minmax(160px,1fr));gap:9px 16px;padding:16px 16px 5px}
+.business-range-inputs{display:flex;min-width:0;align-items:center;gap:6px}
+.business-range-inputs input{width:calc(50% - 11px)!important;min-width:0!important;padding:5px!important}
+.business-range-inputs span{color:#8490a2}
+.business-product-filters .business-range-field label{min-width:58px}
+.business-product-filters .business-range-inputs{flex:1}
+.business-product-filters .business-created-range label{min-width:58px}
+.business-product-filters .business-created-range .business-range-inputs{flex:1}
+.business-manual-cell{white-space:nowrap}
+.business-manual-edit{margin-left:8px;border:0;background:transparent;color:#80bdff;font:inherit;font-size:11px;cursor:pointer;padding:2px 4px}
+.business-manual-edit:hover,.business-manual-edit:focus-visible{color:#c1e1ff;text-decoration:underline;outline:none}
+.business-product-filters textarea{height:33px;min-height:33px;max-height:140px;resize:vertical;font-family:Consolas,monospace}
+.business-control-actions{display:flex;gap:8px;padding:8px 16px 14px}
+.business-filter-footnote{color:#99a4b6;font-size:11px;padding:4px 16px 0}
+.business-report-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;background:#20242b;border-bottom:1px solid #414854}
+.business-report-toolbar>div{display:flex;align-items:center;gap:8px}
+.business-toolbar-search{width:190px}
+.business-column-picker{position:relative;z-index:5}
+.business-column-picker>summary{list-style:none;cursor:pointer;white-space:nowrap;border:1px solid #4b5360;border-radius:4px;background:#292e37;color:#d7dfeb;padding:7px 12px}
+.business-column-picker>summary::-webkit-details-marker{display:none}
+.business-column-menu{position:absolute;top:calc(100% + 7px);right:0;width:min(620px,70vw);max-height:65vh;overflow:auto;background:#292e37;border:1px solid #586270;box-shadow:0 10px 40px #0008;border-radius:6px;padding:14px}
+.business-column-menu p{margin:0 0 12px;color:#b4bfce;font-size:11px}
+.business-column-menu fieldset{border:1px solid #48515f;padding:9px 11px;margin:0 0 12px;display:flex;flex-wrap:wrap;gap:10px 16px}
+.business-column-menu legend{font-size:12px;color:#86c5ff}
+.business-column-menu label{display:flex;align-items:center;gap:5px;font-size:12px;min-width:100px}
+.business-column-menu input{accent-color:#409eff;min-height:0;width:14px;height:14px;padding:0}
+.business-report-notes{display:flex;gap:8px 22px;flex-wrap:wrap;padding:10px 14px 0;color:#a7b4c6;font-size:11px;line-height:1.7}
+.business-date-help{color:#9eacc0;font-size:11px;margin:5px 14px 10px;line-height:1.7}
+.business-sync-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px 0;color:#c0cad8;font-size:11px;line-height:1.7}
+.business-sync-line strong{font-weight:500;color:#70b6fa}
+.business-sync-line .spinner{width:13px;height:13px;flex:none}
+.business-sync-line>span:not(.spinner){overflow-wrap:anywhere}
+.business-progress-count{margin-left:auto;font-variant-numeric:tabular-nums}
+.business-progress{display:block;width:calc(100% - 28px);height:5px;margin:8px 14px;accent-color:#409eff}
+.business-error{margin:10px 14px;padding:10px 12px;background:#482830;border:1px solid #98545f;border-radius:4px;color:#ffc5ca;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.business-report .callout{margin:0 14px 12px;padding:9px 11px;background:#3d3524;border-color:#756340;color:#f3d49a;font-size:11px}
+.business-warnings{margin:0 14px 12px;color:#ddc392;background:#332f27;border:1px solid #605542;padding:8px 10px;font-size:11px}
+.business-warnings summary{cursor:pointer}
+.business-warnings p{line-height:1.7;margin:8px 0 0}
+.business-table-caption{display:flex;justify-content:space-between;gap:12px;padding:8px 14px;color:#a6b2c5;font-size:11px;border-top:1px solid #3b424e}
+.business-table-wrap{width:100%;max-width:100%;max-height:65vh;overflow:auto;overscroll-behavior:contain;background:#191c22;scrollbar-color:#5c6e86 #242a33}
+.business-table-wrap:focus-visible{outline:2px solid #409eff;outline-offset:-2px}
+.business-table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:max-content;font-size:12px;color:#dfe6f1}
+.business-table thead{position:sticky;top:0;z-index:3}
+.business-table th,.business-table td{border-bottom:1px solid #3b424d;border-right:1px solid #3b424d;padding:4px 6px;max-width:200px;min-width:60px;line-height:1.3;font-size:11.5px}
+.business-table thead tr:first-child th{background:#333c4a;color:#e3eeff;text-align:center;padding:6px 8px;font-weight:500}
+.business-table thead tr:nth-child(2) th{background:#28303b;color:#c9d6ea;font-weight:400}
+.business-table td{color:#d8e1ed;background:#1e232b;font-variant-numeric:tabular-nums}
+.business-table tbody tr:nth-child(odd) td{background:#222832}
+.business-table tbody tr:hover td{background:#2b3747}
+.business-table .business-total td{background:#343327!important;color:#ffe9b5;font-weight:600}
+.business-table td:first-child{position:sticky;left:0;z-index:1;box-shadow:2px 0 3px #0002}
+.business-table thead tr:nth-child(2) th:first-child{position:sticky;left:0;z-index:4}
+.business-table .business-number{text-align:right;white-space:nowrap}
+.business-table .business-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.business-table td[data-column=date]{min-width:88px}
+.business-table td[data-column=storeName]{min-width:96px;max-width:130px}
+.business-table td[data-column=productId]{min-width:112px;font-family:Consolas,monospace}
+/* 精细化：勾选列收窄，一屏尽量放下所有列；商品ID下方显示“出/仓”状态。 */
+.business-table th.business-select-col,.business-table td.business-select-col{width:30px;min-width:30px;max-width:30px;padding:3px 2px;text-align:center}
+.business-table td.business-select-col input{width:14px;height:14px;padding:0;accent-color:#409eff}
+.business-id-cell{white-space:nowrap;text-align:center}
+.business-id-cell .business-id-value{display:block;line-height:1.3}
+.business-status-chip{display:inline-block;margin-top:2px;padding:0 5px;border:1px solid #bfe3d2;border-radius:4px;background:#f1faf6;color:#278967;font-size:10px;font-style:normal;line-height:15px}
+.business-table td.business-manual-cell .business-manual-edit{justify-content:flex-end}
+.business-table .business-title{width:168px;min-width:168px;max-width:168px;white-space:normal;overflow-wrap:anywhere}
+.business-sort{display:flex;align-items:center;justify-content:space-between;gap:6px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0;width:100%;white-space:nowrap}
+.business-sort span{font-size:10px;color:#8c9aaf}
+.business-sort:focus-visible{outline:2px solid #409eff}
+.business-sort:hover,.business-table th[aria-sort=ascending],.business-table th[aria-sort=descending]{color:#78bfff}
+.business-empty-message{display:grid;place-items:center;text-align:center;color:#9aa8bd;min-height:180px;padding:28px;line-height:1.8}
+.business-report .table-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;background:#252b34;border-top:1px solid #424b59;color:#b9c5d6;font-size:12px}
+.business-pagination{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.business-pagination select{width:auto}
+.business-history{padding:12px 14px;border-top:1px solid #3c4655;font-size:11px;color:#aab6c8}
+.business-history summary{cursor:pointer;color:#9fc3ef}
+.business-history-row{display:flex;gap:15px;flex-wrap:wrap;line-height:1.8;padding:9px 0;border-bottom:1px solid #394352;overflow-wrap:anywhere}
+.business-history-row:last-child{border:0}
+/* 顶部 44px 属于系统标题栏（自绘窗口的拖动区），弹窗内容必须落在它下面，否则“关闭”等按钮点不到。 */
+.business-modal-shade{position:fixed;inset:0;z-index:80;background:#101721aa;display:flex;align-items:center;justify-content:center;padding:56px 24px 24px}
+.business-sync-dialog{width:760px;max-width:100%;max-height:calc(100vh - 84px);overflow:auto;border-radius:10px;background:#f8fafc;color:#23324b;border:1px solid #dae1ec;box-shadow:0 20px 80px #09101e70;outline:none}
+/* 弹窗自身滚动时，标题栏和关闭按钮固定在顶部——窗口没全屏时关闭按钮也一直点得到。 */
+.business-sync-dialog>header{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:18px 24px;border-bottom:1px solid #dce3ee;background:white;position:sticky;top:0;z-index:3}
+.business-sync-dialog>header .button{min-height:36px;min-width:84px;padding:8px 16px;flex:none}
+.business-sync-dialog>footer{position:sticky;bottom:0;z-index:3}
+.business-sync-dialog h2{margin:0 0 7px;font-size:20px}
+.business-sync-dialog header p{font-size:12px;color:#69778f;margin:0}
+.business-sync-dialog-body{padding:20px 24px}
+.business-sync-presets{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:19px}
+.business-sync-dates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.business-sync-dates input{width:100%;box-sizing:border-box;font:13px/1.5 inherit;min-height:36px;border:1px solid #cdd6e6;border-radius:5px;padding:6px 9px;background:white;color:#30405c}
+.business-sync-note{color:#708098;font-size:11px;line-height:1.8;margin:14px 0 20px}
+.business-sync-sources{border:1px solid #d9e1ec;border-radius:6px;padding:15px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;background:white}
+.business-sync-sources legend{font-size:13px;color:#3a506f;padding:0 7px}
+.business-sync-sources label{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.6}
+.business-sync-sources input{width:15px;height:15px;margin:3px 0;accent-color:#409eff;flex:none}
+.business-sync-sources small{display:block;font-size:10px;line-height:1.7;color:#7c889b;margin-top:3px}
+.business-sync-sources input:disabled+span{color:#8c96a6}
+.business-sync-sources p{grid-column:1/-1;font-size:11px;color:#8d7c63;margin:0;border-top:1px solid #e7ecf3;padding-top:12px}
+.business-source-progress{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #e0e6ee;font-size:12px;color:#62768e}
+.business-source-name{flex:0 0 118px;color:#334a6b;font-weight:600}
+.business-source-meter{flex:0 0 150px;height:8px;accent-color:#409eff}
+.business-source-meter-slot{flex:0 0 150px}
+.business-source-percent{flex:0 0 42px;text-align:right;font-variant-numeric:tabular-nums}
+.business-source-message{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.business-source-progress:last-child{border:0}
+.business-sync-dialog>footer{display:flex;justify-content:flex-end;gap:9px;padding:16px 24px;background:white;border-top:1px solid #dce3ee}
+.business-sync-dialog .business-error{background:#fff0f0;border-color:#e9c1c3;color:#aa4b52;margin:14px 0 0}
+.business-manual-dialog{width:520px;max-width:100%;max-height:calc(100vh - 48px);overflow:auto;border-radius:10px;background:#f8fafc;color:#23324b;border:1px solid #dae1ec;box-shadow:0 20px 80px #09101e70;outline:none}
+.business-manual-dialog>header{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:19px 22px;border-bottom:1px solid #dce3ee;background:white}
+.business-manual-dialog h2{margin:0 0 6px;font-size:19px}
+.business-manual-dialog header p{font-size:12px;color:#69778f;margin:0}
+.business-manual-body{padding:18px 22px}
+.business-manual-current{display:flex;flex-direction:column;gap:5px;padding:11px 13px;margin-bottom:14px;border-radius:6px;background:#edf4ff;color:#354c6b;font-size:12px;overflow-wrap:anywhere}
+.business-manual-current span,.business-manual-note{color:#718099;font-size:11px;line-height:1.7}
+.business-manual-field{display:flex;flex-direction:column;gap:6px;margin:12px 0;color:#40536f;font-size:12px}
+.business-manual-field input,.business-manual-field textarea{width:100%;box-sizing:border-box;border:1px solid #cdd6e6;border-radius:5px;padding:8px 10px;background:white;color:#30405c;font:13px/1.5 "Microsoft YaHei",sans-serif}
+.business-manual-field textarea{resize:vertical}
+.business-manual-field input:focus,.business-manual-field textarea:focus{outline:2px solid #409eff66}
+.business-manual-note{margin:12px 0 0}
+.business-manual-dialog .business-error{background:#fff0f0;border-color:#e9c1c3;color:#aa4b52;margin:12px 0 0}
+.business-manual-dialog>footer{display:flex;justify-content:space-between;gap:9px;padding:15px 22px;background:white;border-top:1px solid #dce3ee}
+@media(max-width:1250px){.business-product-filters{grid-template-columns:minmax(290px,1.2fr) repeat(2,minmax(170px,1fr))}
+.business-table-caption{flex-direction:column;gap:3px}
+.business-report .field label{min-width:54px}
+.business-controls{gap:12px}
+.business-toolbar-search{width:170px}
+}
+@media(max-width:1060px){.business-product-filters{grid-template-columns:repeat(2,minmax(220px,1fr))}
+.business-product-filters .business-range-field{grid-column:1/-1}
+.business-controls .field{min-width:180px}
+.business-report-toolbar>div{flex-wrap:wrap}
+.business-table-wrap{max-height:60vh}
+.business-sync-dates{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:650px){.business-product-filters{grid-template-columns:1fr;padding:13px}
+.business-report .field{width:100%;min-width:0}
+.business-report .field label{min-width:70px}
+.business-controls{padding:13px}
+.business-month-picker{flex-wrap:wrap}
+.business-month-picker input{width:135px!important}
+.business-sync-dates,.business-sync-sources{grid-template-columns:1fr}
+.business-modal-shade{padding:10px}
+.business-sync-dialog{max-height:calc(100vh - 20px)}
+.business-manual-dialog{max-height:calc(100vh - 20px)}
+.business-sync-dialog-body,.business-sync-dialog>header,.business-sync-dialog>footer{padding:16px}
+.business-column-menu{width:calc(100vw - 65px);max-width:calc(100vw - 65px)}
+.business-report-toolbar{padding:10px}
+.business-pagination{gap:5px}
+.business-tabs .button{min-width:100px}
+}
+.business-sync-dialog .business-sync-line{padding:12px 0 6px;color:#657991}
+.business-sync-dialog .business-sync-line strong{color:#2e689f}
+.business-sync-dialog .business-progress{width:100%;margin:8px 0}
+.business-sync-dialog .button.primary{background:#2686dd;border-color:#2686dd;color:white;box-shadow:none}
+
+/* v0.6.6：创建时间（天数）、页码跳转 */
+.business-created-cell{white-space:nowrap;text-align:center}
+.business-created-cell>span{display:block;line-height:1.3}
+.business-days-chip{display:inline-block;margin-top:2px;padding:0 5px;border:1px solid #bfe3d2;border-radius:4px;background:#f1faf6;color:#278967;font-size:10px;font-style:normal;line-height:15px}
+.business-page-jump{display:flex;align-items:center;gap:5px;font-size:11px;color:#67738d;white-space:nowrap}
+.business-page-jump input{width:58px;height:27px;padding:0 6px;border:1px solid #d8dced;border-radius:5px;font-size:11px;text-align:center}
+.business-page-jump input:focus{border-color:#8a8ee8;outline:none;box-shadow:0 0 0 2px #555bd710}
+.business-catalog-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;font-size:11px;color:#67738d}
+
+/* 扣费设置：分组、公式说明、可直接点击录入的手工单元格 */
+.business-fee-group{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 12px}
+.business-fee-group legend{font-size:12px;font-weight:650;color:#4c5672;padding:0 6px}
+.business-fee-formula{margin:6px 0 0;font-size:11px;line-height:1.7;color:#7b849a}
+.business-manual-cell{padding:0}
+.business-manual-cell .business-manual-edit{display:flex;align-items:center;justify-content:flex-end;gap:6px;width:100%;min-height:28px;padding:3px 8px;border:1px dashed transparent;border-radius:5px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.business-manual-cell .business-manual-edit:hover{border-color:#c9ceea;background:#f7f8ff}
+.business-manual-hint{font-size:9px;line-height:16px;padding:0 5px;border-radius:8px;background:#eef0fb;color:#6a72a8}
+/* 列模板下拉（参考用户截图：一行一个模板，右侧铅笔/垃圾桶） */
+.business-template-picker{position:relative;display:inline-block}
+.business-template-picker>summary{cursor:pointer;list-style:none;border:1px solid #4b5360;border-radius:4px;background:#292e37;color:#d7dfeb;padding:7px 12px;font-size:12px;white-space:nowrap}
+.business-template-picker>summary::-webkit-details-marker{display:none}
+.business-template-list{position:absolute;top:calc(100% + 6px);left:0;min-width:250px;max-height:280px;overflow:auto;background:#292e37;border:1px solid #586270;border-radius:6px;box-shadow:0 10px 30px #0009;padding:6px;z-index:8}
+.business-template-row{display:flex;align-items:center;gap:4px}
+.business-template-apply{flex:1;min-width:0;text-align:left;border:0;background:transparent;color:#d7dfeb;font:12px/1.5 inherit;padding:6px 8px;border-radius:4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.business-template-apply:hover{background:#35485b}
+.business-template-icon{border:0;background:transparent;color:#9fb0c6;font-size:13px;line-height:1;padding:5px 6px;border-radius:4px;cursor:pointer}
+.business-template-icon:hover{background:#35485b;color:#e4eefb}
+.business-template-icon.danger:hover{background:#5a2b34;color:#ffc5ca}
+.business-template-choice{display:flex;align-items:center;gap:10px;margin:12px 0}
+.business-template-choice .checkline{display:flex;align-items:center;gap:6px;min-width:126px;color:#40536f;font-size:13px}
+.business-template-choice input[type=radio]{width:15px;height:15px;min-height:0;padding:0;accent-color:#409eff}
+.business-template-choice select,.business-template-choice input[type=text]{flex:1;min-width:0;border:1px solid #cdd6e6;border-radius:5px;padding:8px 10px;background:white;color:#30405c;font:13px/1.5 "Microsoft YaHei",sans-serif}
+.business-template-dialog{width:560px}
+/* 上架天数/待办时间/加黑时间跟在同一列的下面一行 */
+.business-cell-sub{display:block;margin-top:2px;font-size:10px;line-height:1.5;color:#8f9cb0}
+
+/* 列设置顶部工具条：恢复默认 | 模板框 | 保存模板 */
+.business-column-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:10px}
+.business-column-head p{margin:0;flex:1;min-width:0}
+.business-column-tools{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap}
+.business-column-tools .button{white-space:nowrap}
+.business-template-picker>summary{min-width:140px;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.business-template-picker>summary span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.business-template-picker>summary i{font-style:normal;font-size:10px;color:#8fa0b8}
+/* 查询行：快捷日期 + 搜索/重置 + 右侧“同步整店数据/导出数据” */
+.business-query-row{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.business-query-row .business-sync-presets{margin-bottom:0}
+.business-query-row .business-control-actions{padding:0}
+.business-sync-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+
+/* 平台要求滑动验证时的提示条：可一键跳到店铺浏览器完成滑块 */
+.business-validation-prompt{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 14px;padding:10px 12px;border:1px solid #756340;background:#3d3524;border-radius:6px;color:#f3d49a;font-size:12px;line-height:1.7}
+.business-validation-prompt span{flex:1 1 auto;min-width:0}
+
+/* 需求9：数值单元格可点击查看每日趋势；趋势弹窗（纯 SVG 折线图 + 每日数据列表）。 */
+.business-trend-cell{cursor:pointer}
+.business-trend-cell:hover{background:#2b3444!important;box-shadow:inset 0 0 0 1px #409effaa}
+.business-trend-dialog{width:780px}
+.business-trend-chart svg{width:100%;height:auto;display:block}
+.business-trend-grid{stroke:#e2e8f2;stroke-width:1;stroke-dasharray:3 4}
+.business-trend-axis{fill:#8b95a8;font-size:10px}
+.business-trend-line{fill:none;stroke:#409eff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.business-trend-dot{fill:#409eff;stroke:#fff;stroke-width:1.5}
+.business-trend-daily{margin-top:10px}
+.business-trend-daily summary{cursor:pointer;color:#2f78d8;font-size:12px;margin-bottom:6px}
+.business-trend-list{display:flex;flex-wrap:wrap;gap:2px 16px;max-height:180px;overflow:auto;font-size:12px}
+.business-trend-list>div{display:flex;gap:10px;min-width:156px;justify-content:space-between;border-bottom:1px dashed #e5e9f2;padding:2px 0}
+.business-trend-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;font-size:12px;color:#5f6b83}
+.business-trend-controls>span{color:#8b95a8}
+.business-trend-toggle{display:flex;align-items:center;gap:6px;margin-left:auto;color:#5f6b83}
+.business-trend-toggle input{width:14px;height:14px;min-height:0;padding:0;accent-color:#409eff}
+/* 需求5：悬停显示“日期 数值”；打开“显示数值”时图上常驻数值、悬停不再变化。 */
+/* 悬停卡片（用户给的样式）：日期一行，圆点+指标名+数值一行；深色圆角卡片 + 竖向虚线指示。 */
+.business-trend-node .business-trend-hit{fill:transparent;pointer-events:all}
+.business-trend-node:hover .business-trend-tip,.business-trend-node:hover .business-trend-guide{opacity:1}
+.business-trend-guide{stroke:#409eff;stroke-width:1;stroke-dasharray:3 3;opacity:0;pointer-events:none;transition:opacity .12s}
+.business-trend-tip{opacity:0;pointer-events:none;transition:opacity .12s}
+.business-trend-tip rect{fill:#161c29;fill-opacity:.98;stroke:#46587a;stroke-width:1}
+.business-trend-tip-date{fill:#93a3bd;font-size:11.5px;font-weight:500}
+.business-trend-tip-name{fill:#e8eefc;font-size:12px;font-weight:500}
+.business-trend-tip-value{fill:#ffffff;font-size:12.5px;font-weight:700}
+.business-trend-tip-dot{fill:#409eff;stroke:#ffffff;stroke-width:1.2}
+.business-trend-value{fill:#2f78d8;font-size:10.5px;font-weight:600}
+/* 数据同步面板（v0.8.1 布局）：一键同步按钮在顶部，卡片按钮在店名下面。 */
+.business-sync-panel-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.business-sync-panel-top h3{margin:0 10px 0 0}
+.business-sync-store-head{display:flex;align-items:flex-start;gap:9px}
+.business-sync-store-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding-left:2px}
+.business-sync-store-actions .button{min-height:26px;padding:4px 9px;font-size:11px}
+
+/* 日报多店铺选择：第一个选项是“全部店铺”，也可以勾选多家一起统计 */
+.business-store-picker{position:relative;flex:1;min-width:0}
+.business-store-picker>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #4a515e;border-radius:4px;background:#20242b;color:#e2e7ef;padding:5px 9px;min-height:31px;height:31px;box-sizing:border-box;font:12px/1.5 "Microsoft YaHei",sans-serif}
+.business-store-picker>summary::-webkit-details-marker{display:none}
+.business-store-picker>summary span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.business-store-picker>summary i{font-style:normal;font-size:10px;color:#8fa0b8}
+.business-store-menu{position:absolute;top:calc(100% + 7px);left:0;z-index:8;min-width:260px;max-height:60vh;overflow:auto;background:#292e37;border:1px solid #586270;box-shadow:0 10px 40px #0008;border-radius:6px;padding:12px}
+/* 每个店铺名必须单行显示：这里的选择器要压过 .business-report .field label / input 的通用样式，
+   否则复选框会被撑成整行宽、店名被挤成两行。 */
+.business-report .business-store-menu label{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;gap:8px;min-width:0;min-height:26px;padding:3px 4px;border-radius:4px;font-size:12px;color:#d7dfeb;text-align:left;white-space:nowrap}
+.business-report .business-store-menu label:hover{background:#343b47}
+.business-report .business-store-menu label span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.business-report .business-store-menu input{flex:0 0 auto;accent-color:#409eff;min-height:0;min-width:0;width:14px;height:14px;padding:0;margin:0}
+.business-store-menu .inline-note{margin:8px 0 0;color:#b4bfce;font-size:11px;line-height:1.6}
+
+/* 浅色模式：精细化和日报随主题切换（此前这两页固定深色）。深色模式由 theme.css 自动生成。 */
+:root:not([data-theme="dark"]) .business-tabs{background:#f4f5fc;border-color:#e0e4ef}
+:root:not([data-theme="dark"]) .business-tabs .button{color:#7b849a}
+:root:not([data-theme="dark"]) .business-tabs .button.primary{background:#ffffff;color:#2f78d8;box-shadow:inset 0 -2px #409eff}
+:root:not([data-theme="dark"]) .business-report{--text:#39445a;--muted:#7b849a;--line:#e3e8f0;--brand:#409eff;--brand-soft:#e8f3ff;background:#ffffff;color:#39445a;border-color:#e3e8f0}
+:root:not([data-theme="dark"]) .business-stores .button{background:#f6f8fc;border-color:#e3e8f0;color:#4a5670}
+:root:not([data-theme="dark"]) .business-stores .button.primary{background:#e8f3ff;border-color:#409eff;color:#1c6ed0}
+:root:not([data-theme="dark"]) .business-report .button{background:#ffffff;border-color:#dfe3ee;color:#535d75}
+:root:not([data-theme="dark"]) .business-report .button.primary{background:#409eff;border-color:#409eff;color:#ffffff}
+:root:not([data-theme="dark"]) .business-report .button:hover:not(:disabled){background:#f7f8fc;border-color:#c6cce0}
+:root:not([data-theme="dark"]) .business-report .button.primary:hover:not(:disabled){background:#3488e8}
+:root:not([data-theme="dark"]) .business-report input,:root:not([data-theme="dark"]) .business-report select,:root:not([data-theme="dark"]) .business-report textarea{border-color:#dde2ec;background:#ffffff;color:#46506b;color-scheme:light}
+:root:not([data-theme="dark"]) .business-report input::placeholder,:root:not([data-theme="dark"]) .business-report textarea::placeholder{color:#a2aabc}
+:root:not([data-theme="dark"]) .business-report input:disabled,:root:not([data-theme="dark"]) .business-report select:disabled{color:#98a0b0;border-color:#e3e6ee;background:#f3f4f8}
+:root:not([data-theme="dark"]) .business-report .field label{color:#778098}
+:root:not([data-theme="dark"]) .business-filter-panel{border-color:#e6eaf2;background:#f8f9fc}
+:root:not([data-theme="dark"]) .business-filter-footnote{color:#8b95a8}
+:root:not([data-theme="dark"]) .business-report-toolbar{background:#fbfcfe;border-color:#eceff6}
+:root:not([data-theme="dark"]) .business-column-picker>summary,:root:not([data-theme="dark"]) .business-template-picker>summary{border-color:#dfe3ee;background:#ffffff;color:#535d75}
+:root:not([data-theme="dark"]) .business-column-menu,:root:not([data-theme="dark"]) .business-template-list{background:#ffffff;border-color:#e0e4ef;box-shadow:0 10px 40px #26304b26}
+:root:not([data-theme="dark"]) .business-column-menu p{color:#6c7890}
+:root:not([data-theme="dark"]) .business-column-menu fieldset{border-color:#e3e7f0}
+:root:not([data-theme="dark"]) .business-column-menu legend{color:#2f78d8}
+:root:not([data-theme="dark"]) .business-template-apply{color:#4a5670}
+:root:not([data-theme="dark"]) .business-template-apply:hover,:root:not([data-theme="dark"]) .business-template-icon:hover{background:#f2f4fa;color:#2f78d8}
+:root:not([data-theme="dark"]) .business-template-icon{color:#7f8aa0}
+:root:not([data-theme="dark"]) .business-template-icon.danger:hover{background:#ffeef1;color:#c05060}
+:root:not([data-theme="dark"]) .business-report-notes,:root:not([data-theme="dark"]) .business-date-help{color:#7b849a}
+:root:not([data-theme="dark"]) .business-sync-line{color:#5f6b83}
+:root:not([data-theme="dark"]) .business-sync-line strong{color:#2f78d8}
+:root:not([data-theme="dark"]) .business-error{background:#fff3f5;border-color:#efd5dd;color:#a94b60}
+:root:not([data-theme="dark"]) .business-report .callout,:root:not([data-theme="dark"]) .business-warnings{background:#fffaf1;border-color:#f0e0c2;color:#8a6d3b}
+:root:not([data-theme="dark"]) .business-table-caption{color:#7b849a;border-color:#eceff6}
+:root:not([data-theme="dark"]) .business-table-wrap{background:#ffffff;scrollbar-color:#c3ccdd #eef1f7}
+:root:not([data-theme="dark"]) .business-table{color:#3c4658}
+:root:not([data-theme="dark"]) .business-table th,:root:not([data-theme="dark"]) .business-table td{border-color:#edf0f6}
+:root:not([data-theme="dark"]) .business-table thead tr:first-child th{background:#eef2f9;color:#5a6b85}
+:root:not([data-theme="dark"]) .business-table thead tr:nth-child(2) th{background:#f6f8fc;color:#6c7893}
+:root:not([data-theme="dark"]) .business-table td{color:#3c4658;background:#ffffff}
+:root:not([data-theme="dark"]) .business-table tbody tr:nth-child(odd) td{background:#fafbfe}
+:root:not([data-theme="dark"]) .business-table tbody tr:hover td{background:#eef4fd}
+:root:not([data-theme="dark"]) .business-table .business-total td{background:#fff7e6!important;color:#8a6d1f}
+:root:not([data-theme="dark"]) .business-table td:first-child{box-shadow:2px 0 3px #22304d14}
+:root:not([data-theme="dark"]) .business-sort span{color:#93a0b4}
+:root:not([data-theme="dark"]) .business-sort:hover,:root:not([data-theme="dark"]) .business-table th[aria-sort=ascending],:root:not([data-theme="dark"]) .business-table th[aria-sort=descending]{color:#2f78d8}
+:root:not([data-theme="dark"]) .business-empty-message{color:#8b95a8}
+:root:not([data-theme="dark"]) .business-report .table-footer{background:#f7f9fc;border-color:#e8ecf3;color:#7c8698}
+:root:not([data-theme="dark"]) .business-history{border-color:#eceff6;color:#7b849a}
+:root:not([data-theme="dark"]) .business-history summary{color:#2f78d8}
+:root:not([data-theme="dark"]) .business-history-row{border-color:#eff2f7}
+:root:not([data-theme="dark"]) .business-validation-prompt{border-color:#f3e4c6;background:#fffaf1;color:#9c7939}
+:root:not([data-theme="dark"]) .business-store-picker>summary{border-color:#dde2ec;background:#ffffff;color:#46506b}
+:root:not([data-theme="dark"]) .business-store-menu{background:#ffffff;border-color:#e0e4ef;box-shadow:0 10px 40px #26304b26}
+:root:not([data-theme="dark"]) .business-store-menu label{color:#4a5670}
+:root:not([data-theme="dark"]) .business-store-menu .inline-note{color:#7b849a}
+:root:not([data-theme="dark"]) .business-sync-panel{border-color:#e3e8f0;background:#f8f9fc}
+:root:not([data-theme="dark"]) .business-sync-panel header h3{color:#39445a}
+:root:not([data-theme="dark"]) .business-sync-panel header .inline-note{color:#7b849a}
+:root:not([data-theme="dark"]) .business-sync-store{border-color:#e3e8f0;background:#ffffff}
+:root:not([data-theme="dark"]) .business-sync-store.picked{border-color:#409eff;background:#eef6ff}
+:root:not([data-theme="dark"]) .business-sync-store .store-avatar{background:#eef2fb;color:#4a7fd1}
+:root:not([data-theme="dark"]) .business-sync-store-info strong{color:#39445a}
+:root:not([data-theme="dark"]) .business-sync-store-info p{color:#7b849a}
+:root:not([data-theme="dark"]) .business-sync-store-progress{color:#2f78d8!important}
+:root:not([data-theme="dark"]) .business-sync-store-result.ok{color:#1f9d6b}
+:root:not([data-theme="dark"]) .business-sync-store-result.bad{color:#d9534f}
+:root:not([data-theme="dark"]) .business-sync-store-result.warn{color:#b8860b}
+:root:not([data-theme="dark"]) .business-trend-cell:hover{background:#eef4fd!important}
+:root:not([data-theme="dark"]) .business-trend-grid{stroke:#e8edf5}
+:root:not([data-theme="dark"]) .business-trend-list>div{border-color:#eef1f7}
+/* 需求5：顶部“数据同步”面板（店铺卡片 + 一键批量同步 + 取消同步）。 */
+.business-modal-close{position:absolute;top:56px;right:24px;width:38px;height:38px;border-radius:50%;border:1px solid #dae1ec;background:#ffffff;color:#44506b;font-size:22px;line-height:1;cursor:pointer;z-index:6;box-shadow:0 4px 14px #10172133;display:grid;place-items:center;padding:0}
+.business-modal-close:hover{background:#f2f5fb}
+.business-sync-panel{margin:0 14px 12px;padding:12px 14px;border:1px solid #3b414b;border-radius:8px;background:#20242b}
+.business-sync-panel header h3{margin:0 0 6px;font-size:13px;color:#dbe3ef}
+.business-sync-panel header .inline-note{margin:0 0 10px;color:#9aa5b8;font-size:11px;line-height:1.7}
+.business-sync-store-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:9px}
+.business-sync-store{display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:9px 10px;border:1px solid #3b414b;border-radius:7px;background:#242830}
+.business-sync-store.picked{border-color:#409eff;background:#22354a}
+.business-sync-store-check{flex:none;padding-top:3px}
+.business-sync-store-check input{width:14px;height:14px;min-height:0;padding:0;accent-color:#409eff}
+.business-sync-store .store-avatar{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;background:#2f3a4d;color:#9fc6ff;font-size:13px;flex:none}
+.business-sync-store-info{flex:1;min-width:0}
+.business-sync-store-info strong{display:block;font-size:12px;color:#e6ebf5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.business-sync-store-info p{margin:3px 0 0;font-size:11px;color:#9aa5b8;line-height:1.6}
+.business-sync-store-progress{color:#7fb6ff!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 需求（2026-10-13）：每张店铺卡片显示上次同步结果（成功/失败/取消）。 */
+.business-sync-store-result{margin:3px 0 0!important;font-size:11px;line-height:1.55;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.business-sync-store-result.ok{color:#5cc39c}
+.business-sync-store-result.bad{color:#e58a97}
+.business-sync-store-result.warn{color:#e0b46a}
+.business-sync-store-actions{display:flex;flex-direction:column;gap:5px;flex:none}
+.business-sync-store-actions .button{min-height:26px;padding:4px 9px;font-size:11px}
+.business-sync-panel-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:11px}
+
+/* 需求9：数值单元格可点击查看每日趋势；趋势弹窗（纯 SVG 折线图 + 每日数据列表）。 */

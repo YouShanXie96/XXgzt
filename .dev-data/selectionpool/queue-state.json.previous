@@ -1,0 +1,67 @@
+{
+  "running": true,
+  "runId": "run-demo-verify",
+  "done": 0,
+  "total": 4,
+  "ok": 0,
+  "fail": 0,
+  "startedAt": "2026-11-21T07:48:21.666Z",
+  "title": "正在填写：选品#3 类目与属性",
+  "stopRequested": false,
+  "lines": [
+    "[1/4] 选品#3 → 测试旗舰店 拉取详情…",
+    "[1/4] 上架价格：同行价 ¥19.90 → ¥18.90",
+    "[1/4] 正在填充发布页类目：粮油米面 / 调味酱 / 辣椒酱"
+  ],
+  "items": [
+    {
+      "queueId": "q-verify-1",
+      "itemId": 3,
+      "title": "四川红油辣椒酱（第一次采集）",
+      "shopId": "s-demo",
+      "shopName": "测试旗舰店",
+      "status": "running",
+      "code": "",
+      "message": "",
+      "startedAt": "2026-11-21T07:48:51.666Z",
+      "finishedAt": ""
+    },
+    {
+      "queueId": "q-verify-2",
+      "itemId": 2,
+      "title": "四川红油辣椒酱（第二次重复提交）",
+      "shopId": "s-demo",
+      "shopName": "测试旗舰店",
+      "status": "queued",
+      "code": "",
+      "message": "",
+      "startedAt": "",
+      "finishedAt": ""
+    },
+    {
+      "queueId": "q-verify-3",
+      "itemId": 1,
+      "title": "农家手工豆瓣酱 500g",
+      "shopId": "s-demo",
+      "shopName": "测试旗舰店",
+      "status": "queued",
+      "code": "",
+      "message": "",
+      "startedAt": "",
+      "finishedAt": ""
+    },
+    {
+      "queueId": "q-verify-4",
+      "itemId": 3,
+      "title": "四川红油辣椒酱（追加到队列）",
+      "shopId": "s-demo2",
+      "shopName": "二号专营店",
+      "status": "queued",
+      "code": "",
+      "message": "",
+      "startedAt": "",
+      "finishedAt": ""
+    }
+  ],
+  "updatedAt": "2026-11-21T07:49:06.669Z"
+}

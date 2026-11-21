@@ -1,0 +1,320 @@
+/* 护眼模式：低对比度暖灰绿底色，保持文字清晰度和状态色辨识度。 */
+html[data-theme="eye"] {
+  color-scheme: light;
+  --bg: #eef3e7;
+  --panel: #f8faef;
+  --text: #344238;
+  --muted: #6a786d;
+  --line: #d8e0cf;
+  --brand: #617f65;
+  --brand-hover: #526f57;
+  --brand-soft: #e2ebdd;
+  --green: #3f7a5c;
+  --red: #a65c60;
+  --amber: #8d713d;
+  --shadow: 0 5px 24px #40503a0d;
+}
+html[data-theme="eye"] body,
+html[data-theme="eye"] .auth-gate { background: #eef3e7; color: #344238; }
+html[data-theme="eye"] .sidebar { background: #f4f7ed; border-color: #d8e0cf; }
+html[data-theme="eye"] .topbar { background: #f7f9f0e8; border-color: #d8e0cf; }
+html[data-theme="eye"] .panel,
+html[data-theme="eye"] .stat,
+html[data-theme="eye"] .quick-card,
+html[data-theme="eye"] .mode-card,
+html[data-theme="eye"] .reserved-card,
+html[data-theme="eye"] dialog { background: #f8faef; color: #344238; border-color: #d8e0cf; }
+html[data-theme="eye"] .button,
+html[data-theme="eye"] .segmented,
+html[data-theme="eye"] .field input,
+html[data-theme="eye"] .field select,
+html[data-theme="eye"] .field textarea,
+html[data-theme="eye"] .search-input,
+html[data-theme="eye"] .store-switch select { background: #fbfcf4; color: #455448; border-color: #d8e0cf; }
+html[data-theme="eye"] .button:hover,
+html[data-theme="eye"] .nav-item:hover { background: #e8eedf; color: #526f57; }
+html[data-theme="eye"] .button.primary { background: #617f65; border-color: #617f65; color: #fff; }
+html[data-theme="eye"] .nav-item.active,
+html[data-theme="eye"] .segmented button.active,
+html[data-theme="eye"] .filter-chip.active { background: #e2ebdd; color: #526f57; }
+html[data-theme="eye"] th,
+html[data-theme="eye"] .business-table thead tr:first-child th,
+html[data-theme="eye"] .business-table thead tr:nth-child(2) th { background: #e9efe1; color: #536256; }
+html[data-theme="eye"] td,
+html[data-theme="eye"] .business-table td { background: #f8faef; color: #455448; border-color: #e1e7d9; }
+html[data-theme="eye"] tbody tr:hover,
+html[data-theme="eye"] .business-table tbody tr:hover td { background: #eef4e8; }
+html[data-theme="eye"] .callout,
+html[data-theme="eye"] .cloud-auth-info { background: #e9f0e2; border-color: #d0ddc6; color: #536256; }
+html[data-theme="eye"] .callout.warning,
+html[data-theme="eye"] .business-validation-prompt { background: #f7f1e1; border-color: #e2d4b7; color: #7c663d; }
+html[data-theme="eye"] .error-banner,
+html[data-theme="eye"] .business-error,
+html[data-theme="eye"] .callout.danger { background: #f7e9e8; border-color: #e7cecc; color: #96575b; }
+html[data-theme="eye"] .cloud-members-sidebar,
+html[data-theme="eye"] .cloud-store-organizations,
+html[data-theme="eye"] .cloud-permission-group>header,
+html[data-theme="eye"] .cloud-tree-root,
+html[data-theme="eye"] .cloud-department-branch>header { background: #eef3e7; }
+html[data-theme="eye"] .cloud-members-tree-item.active,
+html[data-theme="eye"] .cloud-store-tree-row.active,
+html[data-theme="eye"] .cloud-mindmap-member.selected { background: #e2ebdd; color: #526f57; }
+html[data-theme="eye"] .cloud-members-table th,
+html[data-theme="eye"] .cloud-members-table tr.selected td { background: #e9efe1; }
+html[data-theme="eye"] .cloud-members-table td,
+html[data-theme="eye"] .cloud-store-choice,
+html[data-theme="eye"] .cloud-mindmap-node,
+html[data-theme="eye"] .cloud-level-chain-node { background: #f8faef; border-color: #d8e0cf; }
+html[data-theme="eye"] .cloud-store-choice.selected,
+html[data-theme="eye"] .cloud-mindmap-member,
+html[data-theme="eye"] .cloud-level-chain-node.custom { background: #e8eee1; border-color: #bcccb5; }
+html[data-theme="eye"] .business-report,
+html[data-theme="eye"] .business-filter-panel,
+html[data-theme="eye"] .business-sync-panel,
+html[data-theme="eye"] .business-sync-store { background: #f8faef; border-color: #d8e0cf; color: #455448; }
+html[data-theme="eye"] .business-table td,
+html[data-theme="eye"] .business-table tbody tr:nth-child(odd) td { background: #f8faef; color: #455448; }
+html[data-theme="eye"] .business-table tbody tr:nth-child(odd) td { background: #f5f8ed; }
+html[data-theme="eye"] .business-total td { background: #f4edd8 !important; color: #725f39 !important; }
+
+/* 日报、精细化在浅色主题下有一套独立配色。这里使用更高优先级覆盖整套浅色规则，
+   否则它们会继续使用白底蓝字，即使根节点已经切到护眼模式。 */
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-tabs {
+  background: #eef3e7;
+  border-color: #d8e0cf;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-tabs .button {
+  color: #6a786d;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-tabs .button.primary {
+  background: #f8faef;
+  color: #526f57;
+  box-shadow: inset 0 -2px #617f65;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report {
+  --text: #344238;
+  --muted: #6a786d;
+  --line: #d8e0cf;
+  --brand: #617f65;
+  --brand-soft: #e2ebdd;
+  background: #f8faef;
+  color: #344238;
+  border-color: #d8e0cf;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-stores .button {
+  background: #f1f5e9;
+  border-color: #d8e0cf;
+  color: #4c5b50;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-stores .button.primary {
+  background: #e2ebdd;
+  border-color: #617f65;
+  color: #3f5b45;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .button {
+  background: #fbfcf4;
+  border-color: #d8e0cf;
+  color: #4c5b50;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .button.primary {
+  background: #617f65;
+  border-color: #617f65;
+  color: #fff;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .button:hover:not(:disabled) {
+  background: #e8eedf;
+  border-color: #b8c7b1;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .button.primary:hover:not(:disabled) {
+  background: #526f57;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report input,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report select,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report textarea {
+  border-color: #d8e0cf;
+  background: #fbfcf4;
+  color: #455448;
+  color-scheme: light;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report input::placeholder,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report textarea::placeholder {
+  color: #89958b;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report input:disabled,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report select:disabled {
+  color: #929b91;
+  border-color: #dce4d5;
+  background: #f1f4eb;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .field label,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-filter-footnote,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report-notes,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-date-help,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table-caption,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-empty-message,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-history {
+  color: #6a786d;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-filter-panel {
+  border-color: #d8e0cf;
+  background: #f1f5e9;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report-toolbar,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .table-footer {
+  background: #f4f7ed;
+  border-color: #dfe6d7;
+  color: #6a786d;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-column-picker>summary,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-picker>summary,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-column-menu,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-list,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-store-menu {
+  background: #fbfcf4;
+  border-color: #d8e0cf;
+  color: #4c5b50;
+  box-shadow: 0 10px 40px #40503a1f;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-apply,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-icon,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-store-menu label {
+  color: #4c5b50;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-apply:hover,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-icon:hover,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-store-menu label:hover {
+  background: #e8eedf;
+  color: #526f57;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-column-menu legend,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-line strong,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-history summary,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-store-progress {
+  color: #526f57 !important;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table-wrap {
+  background: #f8faef;
+  scrollbar-color: #b8c7b1 #eef3e7;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table {
+  color: #455448;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table th,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table td {
+  border-color: #e1e7d9;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table thead tr:first-child th {
+  background: #e9efe1;
+  color: #536256;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table thead tr:nth-child(2) th {
+  background: #eff3e7;
+  color: #617064;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table td {
+  background: #f8faef;
+  color: #455448;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table tbody tr:nth-child(odd) td {
+  background: #f5f8ed;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table tbody tr:hover td,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-trend-cell:hover {
+  background: #e8efdf !important;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table .business-total td {
+  background: #f4edd8 !important;
+  color: #725f39 !important;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sort span,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-store-picker>summary i {
+  color: #839087;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sort:hover,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table th[aria-sort=ascending],
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-table th[aria-sort=descending] {
+  color: #526f57;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-store-picker>summary {
+  border-color: #d8e0cf;
+  background: #fbfcf4;
+  color: #455448;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-panel {
+  border-color: #d8e0cf;
+  background: #f1f5e9;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-panel header h3,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-store-info strong {
+  color: #344238;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-panel header .inline-note,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-store-info p {
+  color: #6a786d;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-store {
+  border-color: #d8e0cf;
+  background: #fbfcf4;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-store.picked {
+  border-color: #617f65;
+  background: #e7eee1;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-store .store-avatar {
+  background: #e5ecdf;
+  color: #526f57;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-error,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .callout.danger {
+  background: #f7e9e8;
+  border-color: #e7cecc;
+  color: #96575b;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-report .callout,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-warnings,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-validation-prompt {
+  background: #f7f1e1;
+  border-color: #e2d4b7;
+  color: #7c663d;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-trend-grid {
+  stroke: #dde5d5;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-trend-list>div {
+  border-color: #e2e8da;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-dialog,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-dialog {
+  background: #f1f5e9;
+  color: #344238;
+  border-color: #d8e0cf;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-dialog>header,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-dialog>footer,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-dialog>header,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-dialog>footer,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-sources {
+  background: #f8faef;
+  border-color: #d8e0cf;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-dates input,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-field input,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-field textarea,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-choice select,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-template-choice input[type=text] {
+  background: #fbfcf4;
+  color: #455448;
+  border-color: #d8e0cf;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-dialog header p,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-dialog header p,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-note,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-sync-sources small,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-current span,
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-note {
+  color: #6a786d;
+}
+:root[data-theme="eye"]:not([data-theme="dark"]):not([data-theme="light"]) .business-manual-current {
+  background: #e8eee1;
+  color: #455448;
+}

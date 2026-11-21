@@ -1,0 +1,55 @@
+/* 软件更新浮窗 + 侧栏底部图标区。颜色全部走主题变量，浅色/深色/护眼自动跟随。 */
+.sidebar-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 8px; }
+.rail-item {
+  position: relative; width: 40px; height: 40px; border: 1px solid transparent; border-radius: 12px;
+  background: transparent; color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.rail-item svg { width: 20px; height: 20px; }
+.rail-item:hover { background: var(--bg); color: var(--text); }
+.rail-item.active { background: var(--brand-soft); color: var(--brand); border-color: color-mix(in srgb, var(--brand) 28%, transparent); }
+.rail-item.has-update::after {
+  content: ''; position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--red); box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* 更新浮窗：小卡片，靠左下角，类似系统通知 */
+.update-pop {
+  position: fixed; top: auto; right: auto; left: 76px; bottom: 20px; margin: 0;
+  width: min(460px, calc(100vw - 100px));
+  border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--text);
+  padding: 0; box-shadow: 0 18px 48px rgba(15, 23, 42, .22);
+}
+.update-pop::backdrop { background: transparent; }
+.update-pop-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 16px 0; }
+.update-pop-badge {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 600; background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green);
+}
+.update-pop-badge.new { background: var(--brand-soft); color: var(--brand); }
+.update-pop-badge.bad { background: color-mix(in srgb, var(--red) 13%, transparent); color: var(--red); }
+.update-pop-title { flex: 1; min-width: 0; }
+.update-pop-title strong { display: block; font-size: 14px; font-weight: 600; }
+.update-pop-title span { display: block; margin-top: 2px; font-size: 13px; font-weight: 500; }
+.update-pop-title small { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); word-break: break-all; }
+.update-pop-percent { font-size: 15px; font-weight: 600; color: var(--brand); flex-shrink: 0; }
+.update-pop-close {
+  flex-shrink: 0; width: 26px; height: 26px; border: none; border-radius: 8px; background: transparent;
+  color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.update-pop-close:hover { background: var(--bg); color: var(--text); }
+
+.update-track { height: 5px; border-radius: 999px; background: var(--line); margin: 12px 16px 0; overflow: hidden; }
+.update-track > i { display: block; height: 100%; width: 0; background: var(--brand); border-radius: 999px; transition: width .18s ease; }
+
+.update-pop-log { margin: 12px 16px 0; max-height: 150px; overflow: auto; }
+.update-pop-log ul { list-style: none; margin: 0; padding: 0; }
+.update-pop-log li { display: flex; gap: 10px; padding: 6px 0; font-size: 11px; line-height: 1.5; border-top: 1px dashed var(--line); }
+.update-pop-log li:first-child { border-top: none; }
+.update-pop-log time { color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.update-pop-log strong { font-weight: 500; font-size: 12px; }
+.update-pop-log p { margin: 1px 0 0; color: var(--muted); }
+.update-pop-log li.new strong { color: var(--brand); }
+.update-pop-log li.bad strong { color: var(--red); }
+.update-log-empty { margin: 0; padding: 6px 0; color: var(--muted); font-size: 11px; }
+
+.update-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px 14px; }

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>谢谢工作台</title>
+  <meta name="description" content="本地多店铺运营工作台 — 多店铺经营数据、商品合规扫描、上品库、评价与推广管理工作空间。">
+  <meta property="og:title" content="谢谢工作台">
+  <meta property="og:description" content="本地多店铺运营工作台 — 多店铺经营数据、商品合规扫描、上品库、评价与推广管理工作空间。">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="navigation/navigation.css">
+  <link rel="stylesheet" href="insights/insights.css">
+  <link rel="stylesheet" href="business/business.css">
+  <link rel="stylesheet" href="accounts/accounts.css">
+  <link rel="stylesheet" href="browser/browser.css">
+  <link rel="stylesheet" href="cloud-auth/cloud-auth.css">
+  <link rel="stylesheet" href="selectionpool/selectionpool.css">
+  <link rel="stylesheet" href="plugin/plugin-manager.css">
+  <link rel="stylesheet" href="update/update.css">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="eye-theme.css">
+</head>
+<body class="auth-locked">
+  <div id="auth-gate" class="auth-gate" aria-live="polite">
+    <section class="cloud-auth-card cloud-auth-checking"><span class="spinner"></span><strong>正在自动登录…</strong><p>正在确认本机登录状态，请稍候</p></section>
+  </div>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand"><span class="brand-mark">谢</span><div class="brand-text"><strong>谢谢工作台</strong><small>店铺运营 · 本地工作空间</small></div></div>
+      <button type="button" class="sidebar-pin sidebar-pin-standalone" id="sidebar-pin" data-action="toggle-sidebar-pin" title="收起侧边栏" aria-label="收起侧边栏" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="sidebar-pin-text">收起</span></button>
+      <div class="nav-label">工作空间</div>
+      <nav id="navigation"></nav>
+      <div class="sidebar-bottom"><div id="sidebar-rail" class="sidebar-rail"></div><div id="cloud-account-slot" class="sidebar-account-slot"></div><div class="sidebar-local-line"><small id="app-version">桌面版</small></div></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-heading" id="topbar-heading"></div>
+        <div class="store-switch"><select id="store-select" aria-label="选择当前店铺"><option value="">尚未添加店铺</option></select></div>
+      </header>
+      <div id="progress-area" class="progress-area" aria-live="polite"></div>
+      <div id="error-area" class="error-area" role="alert"></div>
+      <main id="content" tabindex="-1"></main>
+    </div>
+  </div>
+  <div id="toast-area" class="toast-area" aria-live="polite"></div>
+  <div id="plugin-overlay"></div>
+  <dialog id="dialog"><form id="dialog-form" method="dialog"><div id="dialog-content"></div><div class="dialog-actions"><button type="button" class="button" id="dialog-cancel">取消</button><button type="submit" class="button primary" id="dialog-confirm">确认</button></div></form></dialog>
+  <script src="web-bridge.js"></script>
+  <script src="insights/core.js"></script>
+  <script src="insights/trends.js"></script>
+  <script src="insights/peers.js"></script>
+  <script src="insights/recommendations.js"></script>
+  <script src="../business/report-schema.js"></script>
+  <script src="business/columns.js"></script>
+  <script src="business/dates.js"></script>
+  <script src="business/filters.js"></script>
+  <script src="business/fee-settings.js"></script>
+  <script src="business/trend.js"></script>
+  <script src="business/manual-daily.js"></script>
+  <script src="business/business.js"></script>
+  <script src="accounts/credentials.js"></script>
+  <script src="accounts/accounts.js"></script>
+  <script src="browser/browser.js"></script>
+  <script src="../shared/permissions.js"></script>
+  <script src="cloud-auth/cloud-auth.js"></script>
+  <script src="update/update.js"></script>
+  <script src="navigation/navigation.js"></script>
+  <script src="selectionpool/dialogs.js"></script>
+  <script src="selectionpool/selectionpool.js"></script>
+  <script src="selectionpool/editor.js"></script>
+  <script src="plugin/plugin-manager.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
