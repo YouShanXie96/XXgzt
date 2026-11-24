@@ -88,8 +88,8 @@
 
     const ui = {
       name: '', busy: false, message: '', messageTone: 'info',
-      shelf: { itemIds: [], shops: new Set(), config: null, queue: null, pickKeyword: '', shopCats: {}, shopCatState: {}, shopcatOpen: '', templates: { sku: [], detail: [] }, showTips: false },
-      progress: { queue: null, logs: [], resume: null, logAll: false, autoFollow: false, selectedQueueIds: new Set() },
+      shelf: { itemIds: [], shops: new Set(), config: null, queue: null, pickKeyword: '', shopCats: {}, shopCatState: {}, shopcatOpen: '', collapsedShopCatGroups: new Set(), templates: { sku: [], detail: [] }, showTips: false },
+      progress: { queue: null, logs: [], resume: null, logAll: false, autoFollow: false, selectedQueueIds: new Set(), stoppingQueueIds: new Set() },
       pub: { tab: 'failures', keyword: '', page: 1, size: 6, data: null, expanded: '', resume: null, shelfRecords: [], itemId: 0 },
       form: { itemId: 0, detail: null, section: 'basic', fields: [], categoryId: '', categoryPath: '', warehouseItemId: '', message: '' },
       detail: { itemId: 0, tab: 'overview', data: null, busy: false, error: '', imageIndex: 0 },
@@ -102,6 +102,20 @@
       observer.observe(document.body, { childList: true, subtree: true });
     } catch { /* 老环境没有 MutationObserver */ }
     window.setInterval(() => { if (ui.name === 'queueProgress') restoreLogScroll(); }, 500);
+    document.addEventListener('click', event => {
+      if (ui.name !== 'autoShelf' || !ui.shelf.shopcatOpen) return;
+      const t = event.target;
+      if (t?.closest?.('.spx-shopcat-select-wrap, [data-action="selectionpool:dlg-shelf-shopcat-refresh"]')) return;
+      ui.shelf.shopcatOpen = '';
+      render();
+    }, true);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && ui.name === 'autoShelf' && ui.shelf.shopcatOpen) {
+        event.preventDefault();
+        ui.shelf.shopcatOpen = '';
+        render();
+      }
+    });
 
     const shops = () => (data().shopStates?.stores || []);
     const loggedIn = () => (data().shopStates?.loggedIn || []);
@@ -345,7 +359,7 @@
       render();
     }
 
-    const close = () => { ui.name = ''; ui.message = ''; ui.messageTone = 'info'; render(); };
+    const close = () => { ui.name = ''; ui.shelf.shopcatOpen = ''; ui.message = ''; ui.messageTone = 'info'; render(); };
     const isOpen = () => Boolean(ui.name);
 
     // ---------------------------------------------------------------- 各弹窗 HTML
@@ -354,16 +368,22 @@
       running: { label: '上架中', tone: 'running' },
       done: { label: '成功', tone: 'done' },
       failed: { label: '失败', tone: 'failed' },
-      stopped: { label: '未执行', tone: 'failed' },
+      stopped: { label: '已停止', tone: 'stopped' },
     };
     const isQueueRemovable = row => row && (row.status === 'queued' || row.status === 'stopped');
+    const isQueueStoppable = row => row && row.status === 'running';
+    const isQueueSelectable = row => isQueueRemovable(row) || isQueueStoppable(row);
     const poolItems = () => (data().items || []);
     const queueTitle = row => row.title || poolItems().find(x => Number(x.itemId) === Number(row.itemId))?.title || '正在读取标题…';
 
     function pruneQueueSelection(q) {
-      const validIds = new Set((q?.items || []).filter(isQueueRemovable).map(r => r.queueId));
+      const validIds = new Set((q?.items || []).filter(isQueueSelectable).map(r => r.queueId));
       for (const id of [...ui.progress.selectedQueueIds]) {
         if (!validIds.has(id)) ui.progress.selectedQueueIds.delete(id);
+      }
+      const runningIds = new Set((q?.items || []).filter(isQueueStoppable).map(r => r.queueId));
+      for (const id of [...ui.progress.stoppingQueueIds]) {
+        if (!runningIds.has(id)) ui.progress.stoppingQueueIds.delete(id);
       }
     }
 
@@ -397,32 +417,39 @@
     function queueTableRow(row, index) {
       const info = QUEUE_STATE[row.status] || QUEUE_STATE.queued;
       const title = queueTitle(row);
-      const removable = isQueueRemovable(row);
-      const checked = removable && ui.progress.selectedQueueIds.has(row.queueId);
+      const selectable = isQueueSelectable(row);
+      const stoppable = isQueueStoppable(row);
+      const checked = selectable && ui.progress.selectedQueueIds.has(row.queueId);
+      const rowStopping = Boolean(row.stopRequested || ui.progress.stoppingQueueIds.has(row.queueId));
       const shopTag = row.shopName || '—';
       const detail = info.tone === 'running' ? `已用时 ${elapsed(row.startedAt)}`
         : info.tone === 'failed' ? (row.message || row.code || '失败')
+        : info.tone === 'stopped' ? (row.message || '已停止')
         : info.tone === 'done' ? (row.message || '已放入仓库')
         : '等待上架';
       const qid = esc(row.queueId || `row-${index}`);
       return `<tr class="spx-queue-tr is-${info.tone}${checked ? ' is-checked' : ''}" title="选品#${esc(row.itemId)} ${esc(title)} · ${esc(detail)}">
         <td class="select-col">
-          <input type="checkbox" class="table-select" ${removable ? `data-queue-select="${qid}" ${checked ? 'checked' : ''}` : 'disabled'} aria-label="选择排队商品 #${esc(row.itemId)}" title="${removable ? '勾选后可移除排队' : (row.status === 'running' ? '正在上架中，不可移除' : '已执行结束')}">
+          <input type="checkbox" class="table-select" ${selectable ? `data-queue-select="${qid}" ${checked ? 'checked' : ''}` : 'disabled'} aria-label="选择排队商品 #${esc(row.itemId)}" title="${stoppable ? '勾选后可停止当前上架商品' : (selectable ? '勾选后可移除排队' : '已执行结束')}">
         </td>
         <td class="mono spx-q-idx">${index + 1}</td>
         <td class="spx-q-title"><span class="cell-main clip">#${esc(row.itemId)} · ${esc(short(title, 24))}</span></td>
         <td class="spx-q-shop"><span class="clip">${esc(short(shopTag, 12))}</span></td>
         <td class="spx-q-state"><span class="spx-q-pill is-${info.tone}">${esc(info.label)}</span></td>
-        <td class="spx-q-detail"><span class="clip">${esc(short(detail, 26))}</span></td>
+        <td class="spx-q-detail">${stoppable
+          ? `<div class="spx-q-detail-row"><span class="clip">${esc(detail)}</span><button type="button" class="button small danger spx-q-stop-btn" data-action="selectionpool:dlg-queue-stop-item" data-queue-id="${qid}" ${rowStopping ? 'disabled' : ''}>${rowStopping ? '停止中' : '停止'}</button></div>`
+          : `<span class="clip">${esc(short(detail, 26))}</span>`}</td>
       </tr>`;
     }
 
     function shelfQueuePanel(q) {
       const s = queueSideStats(q);
-      const removableRows = s.items.filter(isQueueRemovable);
-      const selectedRemovable = removableRows.filter(r => ui.progress.selectedQueueIds.has(r.queueId));
-      const allChecked = removableRows.length > 0 && selectedRemovable.length === removableRows.length;
-      const someChecked = selectedRemovable.length > 0 && selectedRemovable.length < removableRows.length;
+      const selectableRows = s.items.filter(isQueueSelectable);
+      const selectedRows = selectableRows.filter(r => ui.progress.selectedQueueIds.has(r.queueId));
+      const selectedRemovable = selectedRows.filter(isQueueRemovable);
+      const selectedRunning = selectedRows.filter(isQueueStoppable);
+      const allChecked = selectableRows.length > 0 && selectedRows.length === selectableRows.length;
+      const someChecked = selectedRows.length > 0 && selectedRows.length < selectableRows.length;
       return `<section class="spx-queue-panel" data-spx-side data-spx-queue-panel>
         <div class="spx-side-head">
           <div>
@@ -433,10 +460,11 @@
         </div>
 
         <div class="compliance-batch-bar spx-queue-batch-bar" data-spx-queue-toolbar>
-          <button type="button" class="button small" data-action="selectionpool:dlg-queue-select-all" ${removableRows.length ? '' : 'disabled'}>全选</button>
-          <button type="button" class="button small" data-action="selectionpool:dlg-queue-invert" ${removableRows.length ? '' : 'disabled'}>反选</button>
-          <span class="spx-queue-selcount" data-spx-queue-selcount>${selectedRemovable.length ? `已选 <b>${selectedRemovable.length}</b> / 可移除 ${removableRows.length}` : (removableRows.length ? `可移除 <b>${removableRows.length}</b> 项` : '暂无可移除项')}</span>
+          <button type="button" class="button small" data-action="selectionpool:dlg-queue-select-all" ${selectableRows.length ? '' : 'disabled'}>全选</button>
+          <button type="button" class="button small" data-action="selectionpool:dlg-queue-invert" ${selectableRows.length ? '' : 'disabled'}>反选</button>
+          <span class="spx-queue-selcount" data-spx-queue-selcount>${selectedRows.length ? `已选 <b>${selectedRows.length}</b> / 可操作 ${selectableRows.length}` : (selectableRows.length ? `可操作 <b>${selectableRows.length}</b> 项` : '暂无可操作项')}</span>
           <span class="spacer"></span>
+          <button type="button" class="button small danger spx-queue-stop-btn" data-action="selectionpool:dlg-queue-stop-selected" ${selectedRunning.length ? '' : 'disabled'}>停止上架${selectedRunning.length ? ` (${selectedRunning.length})` : ''}</button>
           <button type="button" class="button small danger spx-queue-remove-btn" data-action="selectionpool:dlg-queue-remove" ${selectedRemovable.length ? '' : 'disabled'}>批量移除选定排队项${selectedRemovable.length ? ` (${selectedRemovable.length})` : ''}</button>
         </div>
 
@@ -445,13 +473,13 @@
             <thead>
               <tr>
                 <th class="select-col">
-                  <input type="checkbox" class="table-select" data-queue-select-all="1" ${allChecked ? 'checked' : ''} ${removableRows.length ? '' : 'disabled'} ${someChecked ? 'data-indeterminate="1"' : ''} aria-label="全选排队中商品" title="全选 / 取消全选所有排队中商品">
+                  <input type="checkbox" class="table-select" data-queue-select-all="1" ${allChecked ? 'checked' : ''} ${selectableRows.length ? '' : 'disabled'} ${someChecked ? 'data-indeterminate="1"' : ''} aria-label="全选可操作商品" title="全选 / 取消全选所有排队中或上架中商品">
                 </th>
                 <th>#</th>
                 <th>商品</th>
                 <th>目标店铺</th>
                 <th>状态</th>
-                <th>详情 / 用时</th>
+                <th>详情 / 操作</th>
               </tr>
             </thead>
             <tbody data-spx-side-list>
@@ -478,24 +506,31 @@
       }
       const consumedGroups = new Set();
       const renderOpt = (o, cls = '') => `<label class="spx-shopcat-opt ${cls}"><input type="checkbox" data-action="selectionpool:dlg-shopcat-pick" data-id="${esc(storeId)}" data-name="${esc(o.name)}" ${savedNames.includes(o.name) ? 'checked' : ''}><span>${esc(o.name)}</span></label>`;
+      const renderGroupBlock = (groupName, kids) => {
+        const collapsed = ui.shelf.collapsedShopCatGroups.has(`${storeId}::${groupName}`);
+        return `<div class="spx-shopcat-node has-children">
+          <button type="button" class="spx-shopcat-group-toggle${collapsed ? ' is-collapsed' : ''}" data-action="selectionpool:dlg-shopcat-group" data-id="${esc(storeId)}" data-group="${esc(groupName)}" aria-expanded="${!collapsed}">
+            <span class="spx-shopcat-caret"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${collapsed ? '<path d="M4.5 2.5L8 6L4.5 9.5"/>' : '<path d="M2.5 4.5L6 8L9.5 4.5"/>'}</svg></span>
+            <span>${esc(groupName)}</span>
+          </button>
+          ${collapsed ? '' : `<div class="spx-shopcat-children">${kids.map(k => renderOpt(k, 'spx-shopcat-child')).join('')}</div>`}
+        </div>`;
+      };
 
       const parts = [];
       if (topItems.length) {
         parts.push(`<div class="spx-shopcat-tree">${topItems.map(parent => {
           const kids = childrenByGroup.get(parent.name) || [];
-          if (kids.length) consumedGroups.add(parent.name);
-          return `<div class="spx-shopcat-node${kids.length ? ' has-children' : ''}">
-            ${renderOpt(parent, kids.length ? 'spx-shopcat-parent' : '')}
-            ${kids.length ? `<div class="spx-shopcat-children">${kids.map(k => renderOpt(k, 'spx-shopcat-child')).join('')}</div>` : ''}
-          </div>`;
+          if (kids.length) {
+            consumedGroups.add(parent.name);
+            return renderGroupBlock(parent.name, kids);
+          }
+          return `<div class="spx-shopcat-node">${renderOpt(parent)}</div>`;
         }).join('')}</div>`);
       }
       for (const [group, rows] of childrenByGroup.entries()) {
         if (consumedGroups.has(group)) continue;
-        parts.push(`<div class="spx-shopcat-group">
-          <div class="spx-shopcat-group-h">${esc(group)}</div>
-          <div class="spx-shopcat-children">${rows.map(k => renderOpt(k, 'spx-shopcat-child')).join('')}</div>
-        </div>`);
+        parts.push(`<div class="spx-shopcat-tree">${renderGroupBlock(group, rows)}</div>`);
       }
       return parts.join('');
     }
@@ -590,22 +625,26 @@
                 const catState = ui.shelf.shopCatState[id] || {};
                 const picked = savedNames.length
                   ? `<b>已选 ${savedNames.length} 个</b>：${esc(savedNames.join('、'))}`
-                  : '<span class="dim">未设置（上架时不选店铺中分类）</span>';
+                  : '<span class="dim">选择分类（上架时不选店铺中分类）</span>';
                 return `<div class="spx-shopcat-block">
                   <div class="spx-shopcat-row">
                     <span class="spx-shopcat-shop">${esc(s.name || id)}</span>
-                    <button type="button" class="spx-shopcat-toggle ${open ? 'on' : ''}" data-action="selectionpool:dlg-shopcat-toggle" data-id="${esc(id)}" title="展开/收起本店可选的「店铺中分类」">
-                      <span class="spx-shopcat-current">${picked}</span><em>${open ? '▲' : '▼'}</em>
-                    </button>
+                    <div class="spx-shopcat-select-wrap">
+                      <button type="button" class="spx-shopcat-toggle ${open ? 'on' : ''}" data-action="selectionpool:dlg-shopcat-toggle" data-id="${esc(id)}" aria-expanded="${open}" title="展开/收起本店可选的「店铺中分类」">
+                        <span class="spx-shopcat-current">${picked}</span><em><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${open ? '<path d="M2.5 7.5L6 4L9.5 7.5"/>' : '<path d="M2.5 4.5L6 8L9.5 4.5"/>'}</svg></em>
+                      </button>
+                      ${open ? `<div class="spx-shopcat-panel" role="listbox" aria-multiselectable="true">
+                        ${catState.busy ? '<p class="spx-note">正在读取本店分类（含子分类）…</p>' : ''}
+                        ${catState.error ? `<p class="spx-note spx-error">${esc(catState.error)}</p>` : ''}
+                        ${options.length ? renderShopCatTree(id, options, savedNames) : (catState.busy ? '' : '<p class="spx-note">点「刷新」读取本店分类（含子分类）</p>')}
+                        <div class="spx-shopcat-foot">
+                          <span class="spx-note">${options.length ? `共 ${options.length} 项` : ''}</span>
+                          <button type="button" class="link-button" data-action="selectionpool:dlg-shopcat-clear" data-id="${esc(id)}">清空本店分类</button>
+                        </div>
+                      </div>` : ''}
+                    </div>
                     <button type="button" class="button small" data-action="selectionpool:dlg-shelf-shopcat-refresh" data-id="${esc(id)}" ${catState.busy ? 'disabled' : ''}>${catState.busy ? '读取中…' : '刷新'}</button>
                   </div>
-                  ${open ? `<div class="spx-shopcat-panel">
-                    ${catState.busy ? '<p class="spx-note">正在读取本店分类（含子分类）…</p>' : ''}
-                    ${catState.error ? `<p class="spx-note spx-error">${esc(catState.error)}</p>` : ''}
-                    ${options.length ? renderShopCatTree(id, options, savedNames) : (catState.busy ? '' : '<p class="spx-note">点「刷新」读取本店分类（含子分类）</p>')}
-                    <div class="spx-shopcat-foot"><span class="spacer"></span>
-                      <button type="button" class="link-button" data-action="selectionpool:dlg-shopcat-clear" data-id="${esc(id)}">清空本店分类</button></div>
-                  </div>` : ''}
                 </div>`;
               }).join('') : '<p class="spx-note">请先在上方勾选目标店铺，即可按店铺设置默认分类。</p>'}
             </section>
@@ -1312,24 +1351,61 @@
         }
         case 'queue-select-all': {
           const q = queue();
-          const removable = (q.items || []).filter(isQueueRemovable);
-          const allSelected = removable.length > 0 && removable.every(r => ui.progress.selectedQueueIds.has(r.queueId));
+          const selectable = (q.items || []).filter(isQueueSelectable);
+          const allSelected = selectable.length > 0 && selectable.every(r => ui.progress.selectedQueueIds.has(r.queueId));
           if (allSelected) {
-            for (const r of removable) ui.progress.selectedQueueIds.delete(r.queueId);
+            for (const r of selectable) ui.progress.selectedQueueIds.delete(r.queueId);
           } else {
-            for (const r of removable) ui.progress.selectedQueueIds.add(r.queueId);
+            for (const r of selectable) ui.progress.selectedQueueIds.add(r.queueId);
           }
           updateQueueSelectionUi();
           return true;
         }
         case 'queue-invert': {
           const q = queue();
-          const removable = (q.items || []).filter(isQueueRemovable);
-          for (const r of removable) {
+          const selectable = (q.items || []).filter(isQueueSelectable);
+          for (const r of selectable) {
             if (ui.progress.selectedQueueIds.has(r.queueId)) ui.progress.selectedQueueIds.delete(r.queueId);
             else ui.progress.selectedQueueIds.add(r.queueId);
           }
           updateQueueSelectionUi();
+          return true;
+        }
+        case 'queue-stop-item': {
+          const qid = String(target.dataset.queueId || '');
+          if (!qid) return true;
+          ui.progress.stoppingQueueIds.add(qid);
+          render();
+          const res = await api('selectionpool.queueStopItem', { queueId: qid }).catch(error => ({ error: String(error?.message || error) }));
+          if (res?.error) {
+            ui.progress.stoppingQueueIds.delete(qid);
+            setDialogMessage(res.error, true);
+            return true;
+          }
+          ui.progress.selectedQueueIds.delete(qid);
+          if (res?.items) applyQueue(res);
+          await refreshProgress();
+          return true;
+        }
+        case 'queue-stop-selected': {
+          const q = queue();
+          const runningIds = new Set((q.items || []).filter(isQueueStoppable).map(r => r.queueId));
+          const toStop = [...ui.progress.selectedQueueIds].filter(qid => runningIds.has(qid));
+          if (!toStop.length) { setDialogMessage('请先勾选正在上架中的商品', true); return true; }
+          for (const qid of toStop) ui.progress.stoppingQueueIds.add(qid);
+          render();
+          for (const qid of toStop) {
+            const res = await api('selectionpool.queueStopItem', { queueId: qid }).catch(error => ({ error: String(error?.message || error) }));
+            if (res?.error) {
+              ui.progress.stoppingQueueIds.delete(qid);
+              setDialogMessage(res.error, true);
+              return true;
+            }
+            ui.progress.selectedQueueIds.delete(qid);
+            if (res?.items) applyQueue(res);
+          }
+          ui.message = '';
+          await refreshProgress();
           return true;
         }
         case 'queue-remove': {
@@ -1357,6 +1433,15 @@
           // 店铺中分类的多选框：只在 handleChange 里保存，避免 click + change 重复写配置
           return true;
         }
+        case 'shopcat-group': {
+          const storeId = String(target.dataset.id || '');
+          const group = String(target.dataset.group || '');
+          const gKey = `${storeId}::${group}`;
+          if (ui.shelf.collapsedShopCatGroups.has(gKey)) ui.shelf.collapsedShopCatGroups.delete(gKey);
+          else ui.shelf.collapsedShopCatGroups.add(gKey);
+          render();
+          return true;
+        }
         case 'shelf-shopcat-refresh': {
           const storeId = String(target.dataset.id || '');
           ui.shelf.shopcatOpen = storeId;
@@ -1367,7 +1452,10 @@
           const storeId = String(target.dataset.id || '');
           ui.shelf.shopcatOpen = ui.shelf.shopcatOpen === storeId ? '' : storeId;
           render();
-          if (ui.shelf.shopcatOpen && !(ui.shelf.shopCats[storeId] || []).length) void loadShelfCats({ ids: [storeId] });
+          if (ui.shelf.shopcatOpen) {
+            try { document.querySelector('.spx-shopcat-panel')?.scrollIntoView({ block: 'nearest' }); } catch { /* */ }
+            if (!(ui.shelf.shopCats[storeId] || []).length) void loadShelfCats({ ids: [storeId] });
+          }
           return true;
         }
         case 'shopcat-clear': {
@@ -1575,29 +1663,36 @@
       if (!side) return;
       const q = queue();
       const items = Array.isArray(q.items) ? q.items : [];
-      const removable = items.filter(isQueueRemovable);
-      const selected = removable.filter(r => ui.progress.selectedQueueIds.has(r.queueId));
+      const selectable = items.filter(isQueueSelectable);
+      const selected = selectable.filter(r => ui.progress.selectedQueueIds.has(r.queueId));
+      const selectedRemovable = selected.filter(isQueueRemovable);
+      const selectedRunning = selected.filter(isQueueStoppable);
       const allBox = side.querySelector('[data-queue-select-all]');
       if (allBox) {
-        allBox.checked = removable.length > 0 && selected.length === removable.length;
-        allBox.indeterminate = selected.length > 0 && selected.length < removable.length;
-        allBox.disabled = !removable.length;
+        allBox.checked = selectable.length > 0 && selected.length === selectable.length;
+        allBox.indeterminate = selected.length > 0 && selected.length < selectable.length;
+        allBox.disabled = !selectable.length;
       }
       const selAllBtn = side.querySelector('[data-action="selectionpool:dlg-queue-select-all"]');
-      if (selAllBtn) selAllBtn.disabled = !removable.length;
+      if (selAllBtn) selAllBtn.disabled = !selectable.length;
       const invertBtn = side.querySelector('[data-action="selectionpool:dlg-queue-invert"]');
-      if (invertBtn) invertBtn.disabled = !removable.length;
+      if (invertBtn) invertBtn.disabled = !selectable.length;
 
       const selCountEl = side.querySelector('[data-spx-queue-selcount]');
       if (selCountEl) {
         selCountEl.innerHTML = selected.length
-          ? `已选 <b>${selected.length}</b> / 可移除 ${removable.length}`
-          : (removable.length ? `可移除 <b>${removable.length}</b> 项` : '暂无可移除项');
+          ? `已选 <b>${selected.length}</b> / 可操作 ${selectable.length}`
+          : (selectable.length ? `可操作 <b>${selectable.length}</b> 项` : '暂无可操作项');
+      }
+      const stopSelectedBtn = side.querySelector('[data-action="selectionpool:dlg-queue-stop-selected"]');
+      if (stopSelectedBtn) {
+        stopSelectedBtn.disabled = !selectedRunning.length;
+        stopSelectedBtn.textContent = selectedRunning.length ? `停止上架 (${selectedRunning.length})` : '停止上架';
       }
       const removeBtn = side.querySelector('[data-action="selectionpool:dlg-queue-remove"]');
       if (removeBtn) {
-        removeBtn.disabled = !selected.length;
-        removeBtn.textContent = selected.length ? `批量移除选定排队项 (${selected.length})` : '批量移除选定排队项';
+        removeBtn.disabled = !selectedRemovable.length;
+        removeBtn.textContent = selectedRemovable.length ? `批量移除选定排队项 (${selectedRemovable.length})` : '批量移除选定排队项';
       }
       side.querySelectorAll('[data-queue-select]').forEach(box => {
         const isChecked = ui.progress.selectedQueueIds.has(box.dataset.queueSelect);
@@ -1671,11 +1766,11 @@
       }
       if (t.dataset.queueSelectAll !== undefined) {
         const q = queue();
-        const removable = (q.items || []).filter(isQueueRemovable);
+        const selectable = (q.items || []).filter(isQueueSelectable);
         if (t.checked) {
-          for (const r of removable) ui.progress.selectedQueueIds.add(r.queueId);
+          for (const r of selectable) ui.progress.selectedQueueIds.add(r.queueId);
         } else {
-          for (const r of removable) ui.progress.selectedQueueIds.delete(r.queueId);
+          for (const r of selectable) ui.progress.selectedQueueIds.delete(r.queueId);
         }
         updateQueueSelectionUi();
         return true;

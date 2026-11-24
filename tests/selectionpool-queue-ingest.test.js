@@ -272,3 +272,151 @@ test('duplicate submissions identified only by sku or product_url also append ne
   );
 });
 
+test('queueStopItem stops active running item and continues remaining queued item', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'xxgzt-stop-item-'));
+  try {
+    const storage = createStorage(tmp);
+    const stores = [{ id: 'store-1', name: '测试旗舰店' }];
+    const service = createSelectionPoolService({
+      dataDir: tmp,
+      ...storage,
+      listStores: () => stores,
+      readAccountState: async () => ({ loggedIn: true, label: '已登录' }),
+      emit: () => {},
+    }, { pluginAutoUpdate: false, autoIngest: false });
+
+    const a = await service.repository.ingest({ product_id: 'sp1', title: '商品甲', snapshot: { category_id: '101', category_path: '类目/甲' } });
+    const b = await service.repository.ingest({ product_id: 'sp2', title: '商品乙', snapshot: { category_id: '101', category_path: '类目/乙' } });
+
+    let startedResolve = null;
+    const firstRunning = new Promise(resolve => { startedResolve = resolve; });
+    service.setDriver({
+      publish: async ({ detail, signal }) => {
+        if (detail.itemId === a.itemId) {
+          startedResolve();
+          await new Promise((_, reject) => {
+            if (signal?.aborted) {
+              const err = new Error('已手动停止');
+              err.code = 'STOPPED';
+              return reject(err);
+            }
+            signal?.addEventListener('abort', () => {
+              const err = new Error('已手动停止');
+              err.code = 'STOPPED';
+              reject(err);
+            }, { once: true });
+          });
+        }
+        return { warehouseItemId: `wh-${detail.itemId}` };
+      },
+    });
+
+    const startRes = await service.handle('startAutoShelf', { itemIds: [a.itemId, b.itemId], storeIds: ['store-1'] });
+    assert.equal(startRes.ok, true);
+    await firstRunning;
+
+    const mid = await service.handle('queueStatus', {});
+    const qA = mid.items.find(x => x.itemId === a.itemId);
+    const qB = mid.items.find(x => x.itemId === b.itemId);
+    assert.equal(qA.status, 'running');
+    assert.equal(qB.status, 'queued');
+
+    // Stop only running item a while b is queued
+    await service.handle('queueStopItem', { queueId: qA.queueId });
+
+    for (let i = 0; i < 80; i++) {
+      const q = await service.handle('queueStatus', {});
+      if (!q.running) break;
+      await new Promise(r => setTimeout(r, 20));
+    }
+
+    const finalQ = await service.handle('queueStatus', {});
+    assert.equal(finalQ.running, false);
+    const finalA = finalQ.items.find(x => x.itemId === a.itemId);
+    const finalB = finalQ.items.find(x => x.itemId === b.itemId);
+    assert.equal(finalA.status, 'stopped');
+    assert.equal(finalB.status, 'done');
+    assert.equal(finalQ.ok, 1);
+
+    await service.dispose();
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test('queueStopItem handles sole running item, queued item, and orphaned state recovery', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'xxgzt-stop-sole-'));
+  try {
+    const storage = createStorage(tmp);
+    const stores = [{ id: 'store-1', name: '测试旗舰店' }];
+    const service = createSelectionPoolService({
+      dataDir: tmp,
+      ...storage,
+      listStores: () => stores,
+      readAccountState: async () => ({ loggedIn: true, label: '已登录' }),
+      emit: () => {},
+    }, { pluginAutoUpdate: false, autoIngest: false });
+
+    const a = await service.repository.ingest({ product_id: 's1', title: '单品一', snapshot: { category_id: '101', category_path: '类目/一' } });
+    const b = await service.repository.ingest({ product_id: 's2', title: '单品二', snapshot: { category_id: '101', category_path: '类目/二' } });
+
+    let releaseFirst = null;
+    let resolveRunning = null;
+    const runningPromise = new Promise(resolve => { resolveRunning = resolve; });
+    service.setDriver({
+      publish: async ({ detail, signal }) => {
+        if (detail.itemId === a.itemId) {
+          resolveRunning();
+          await new Promise((resolve, reject) => {
+            releaseFirst = resolve;
+            signal?.addEventListener('abort', () => {
+              const err = new Error('已手动停止');
+              err.code = 'STOPPED';
+              reject(err);
+            }, { once: true });
+          });
+        }
+        return { warehouseItemId: `wh-${detail.itemId}` };
+      },
+    });
+
+    await service.handle('startAutoShelf', { itemIds: [a.itemId, b.itemId], storeIds: ['store-1'] });
+    await runningPromise;
+
+    // 1) Stopping queued item b marks b stopped without interrupting active item a
+    const mid = await service.handle('queueStatus', {});
+    const qA = mid.items.find(x => x.itemId === a.itemId);
+    const qB = mid.items.find(x => x.itemId === b.itemId);
+    const afterStopB = await service.handle('queueStopItem', { queueId: qB.queueId });
+    assert.equal(afterStopB.items.find(x => x.queueId === qB.queueId).status, 'stopped');
+    assert.equal(afterStopB.items.find(x => x.queueId === qA.queueId).status, 'running');
+
+    // 2) Now qA is the sole active item; stopping qA ends batch cleanly
+    await service.handle('queueStopItem', { queueId: qA.queueId });
+    for (let i = 0; i < 80; i++) {
+      const q = await service.handle('queueStatus', {});
+      if (!q.running) break;
+      await new Promise(r => setTimeout(r, 20));
+    }
+    const afterStopA = await service.handle('queueStatus', {});
+    assert.equal(afterStopA.running, false);
+    assert.equal(afterStopA.items.find(x => x.queueId === qA.queueId).status, 'stopped');
+    assert.equal(afterStopA.items.find(x => x.queueId === qB.queueId).status, 'stopped');
+
+    // 3) Orphaned running state (no activeQueueRunner) recovers cleanly
+    await service.handle('setQueueState', {
+      running: true,
+      runId: 'orphan-run',
+      items: [{ queueId: 'orphan-q1', itemId: a.itemId, shopId: 'store-1', status: 'running' }],
+    });
+    const recovered = await service.handle('queueStopItem', { queueId: 'orphan-q1' });
+    assert.equal(recovered.running, false);
+    assert.equal(recovered.items[0].status, 'stopped');
+    if (releaseFirst) releaseFirst();
+
+    await service.dispose();
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+

@@ -281,17 +281,75 @@ function createSelectionPoolService(ctx, options = {}) {
     try { return typeof driver?.currentStep === 'function' ? String(driver.currentStep() || '') : ''; } catch { return ''; }
   }
 
-  /** 请求中断当前批次：置标记 + 立刻销毁发布窗口（挂着的页面脚本会马上失败）。 */
-  function requestStop(reason = '已手动停止', kind = 'manual') {
+  /** 请求中断当前批次或当前正在上架的单个商品：置标记 + 立刻销毁发布窗口（挂着的页面脚本会马上失败）。 */
+  function requestStop(reason = '已手动停止', kind = 'manual', stopMode = 'all') {
     if (!activeAbort) return { ok: false, running: false };
     if (!activeAbort.stopped) {
       activeAbort.stopped = true;
       activeAbort.reason = String(reason || '已手动停止');
       activeAbort.kind = kind === 'stall' ? 'stall' : 'manual';
+      activeAbort.stopMode = stopMode === 'single' && kind !== 'stall' ? 'single' : 'all';
       try { activeAbort.onStop?.(); } catch { /* */ }
+    } else if (stopMode === 'all') {
+      activeAbort.stopMode = 'all';
     }
     try { driver?.cancel?.(activeAbort.reason); } catch { /* */ }
     return { ok: true, running: true, step: driverStep() };
+  }
+
+  /**
+   * 停止右侧排队列表中的单个商品：
+   *  - 如果是正在上架的当前商品（或仅有这一件在跑），立刻中断当前发布窗口并标记该商品为「已停止」；
+   *    若队列里还有其他「排队中」的商品，则只停这一件并自动继续下一件；
+   *  - 如果是「排队中」的等待商品，直接将其状态改为「已停止」；
+   *  - 如果没有执行中的 runner（异常退出残留），调用 recoverStopped() 收干净运行态。
+   */
+  async function queueStopItem(input = {}) {
+    const queueId = C.str(input.queueId);
+    const currentQueue = await publication.queue();
+    const target = queueId
+      ? (currentQueue.items || []).find(r => r.queueId === queueId)
+      : (currentQueue.items || []).find(r => r.status === 'running');
+
+    if (!activeQueueRunner || !activeAbort) {
+      if (target && (target.status === 'queued' || target.status === 'running')) {
+        await publication.queueUpdateItem(target.queueId, {
+          status: 'stopped',
+          code: 'STOPPED',
+          message: '已手动停止',
+          finishedAt: new Date().toISOString(),
+        });
+      }
+      const recovered = await publication.recoverStopped();
+      return recovered?.queue || publication.queue();
+    }
+
+    if (!target) return currentQueue;
+    if (target.status === 'queued') {
+      await publication.queueUpdateItem(target.queueId, {
+        status: 'stopped',
+        code: 'STOPPED',
+        message: '已手动停止',
+        finishedAt: new Date().toISOString(),
+      });
+      if (activeLogLine) {
+        await activeLogLine(`已停止排队商品：选品#${target.itemId} → ${target.shopName || '目标店铺'}`, { poolItemId: target.itemId, code: 'STOPPED' });
+      }
+      return publication.queue();
+    }
+
+    if (target.status === 'running' || (queueId && queueId === activeAbort.currentQueueId)) {
+      const hasMoreQueued = (currentQueue.items || []).some(r => r.queueId !== target.queueId && r.status === 'queued');
+      const stopMode = hasMoreQueued ? 'single' : 'all';
+      requestStop(hasMoreQueued ? '已手动停止当前商品' : '已手动停止', 'manual', stopMode);
+      await publication.queuePatch({
+        stopRequested: stopMode === 'all',
+        title: `正在停止：选品#${target.itemId}…`,
+      });
+      return publication.queue();
+    }
+
+    return currentQueue;
   }
 
   /**
@@ -381,7 +439,7 @@ function createSelectionPoolService(ctx, options = {}) {
     activeRunId = runId;
     activeLogLine = logLine;
     const abort = {
-      stopped: false, reason: '', onStop: null,
+      stopped: false, reason: '', onStop: null, stopMode: 'all', currentQueueId: '',
       startedAt: Date.now(), lastProgressAt: Date.now(), itemStartedAt: 0,
     };
     activeAbort = abort;
@@ -437,6 +495,7 @@ function createSelectionPoolService(ctx, options = {}) {
           const cfg = await publication.config();
           const started = new Date().toISOString();
 
+          abort.currentQueueId = nextRow.queueId;
           await publication.queueUpdateItem(nextRow.queueId, { status: 'running', startedAt: started });
           await publication.queuePatch({ title: `${shop.name} · 选品#${itemId}` });
           abort.lastProgressAt = Date.now();
@@ -523,7 +582,10 @@ function createSelectionPoolService(ctx, options = {}) {
             warehouseItemId = C.str(published.warehouseItemId);
             // 把本次发布页真实读到的「店铺中分类」写回缓存，设置页下次打开就有完整选项
             if (Array.isArray(published.shopCategories) && published.shopCategories.length) {
-              await categoryService.rememberShopCategories(storeId, published.shopCategories.map(name => ({ name }))).catch(() => undefined);
+              await categoryService.rememberShopCategories(
+                storeId,
+                published.shopCategories.map(item => (item && typeof item === 'object' ? item : { name: item })),
+              ).catch(() => undefined);
             }
             await repo.update(itemId, { flow: C.FLOW_STATES.TOFILL, warehouseItemId, shopProfileId: storeId }, detail.version);
             await repo.appendShelfRecord({ runId, itemId, productId: detail.product?.id, shopId: storeId, shopName: shop.name, warehouseItemId, status: 'success', at: new Date().toISOString() });
@@ -544,6 +606,7 @@ function createSelectionPoolService(ctx, options = {}) {
             if (String(error?.code || '') === 'STOPPED' || abort.stopped) {
               const reason = abort.reason || String(error?.message || '') || '已手动停止';
               const stalled = abort.kind === 'stall';
+              const singleStop = !stalled && abort.stopMode === 'single';
               await logLine(`${label} ${stalled ? '已自动中断' : '已停止'}：${reason}`, { poolItemId: itemId, shopProfileId: storeId, code: stalled ? 'PUBLISH_STALL' : 'STOPPED', finishedAt: new Date().toISOString() });
               if (stalled) {
                 // 卡住要能在「失败排查」里查到原因，但不登记人工补全（窗口已关闭，重新上架即可）
@@ -559,6 +622,15 @@ function createSelectionPoolService(ctx, options = {}) {
                 finishedAt: new Date().toISOString(),
               }).catch(() => undefined);
               results.push({ itemId, ok: false, stopped: true, code: stalled ? 'PUBLISH_STALL' : 'STOPPED', message: reason });
+              if (singleStop) {
+                abort.stopped = false;
+                abort.reason = '';
+                abort.stopMode = 'all';
+                abort.currentQueueId = '';
+                abort.lastProgressAt = Date.now();
+                await publication.queuePatch({ stopRequested: false }).catch(() => undefined);
+                continue;
+              }
               interrupted = true;
               break;
             }
@@ -1816,7 +1888,7 @@ function createSelectionPoolService(ctx, options = {}) {
     queueStop: async () => {
       // 先中断当前商品（销毁发布窗口），再落 stopRequested —— 顺序反了会出现
       // 「按钮变成正在停止，但商品还在跑」的空窗期。
-      requestStop('已手动停止');
+      requestStop('已手动停止', 'manual', 'all');
       const state = await publication.queueStop();
       if (!activeQueueRunner) {
         // 没有执行中的批次（上次异常退出留下的 running=true）：直接把运行态收干净
@@ -1825,6 +1897,7 @@ function createSelectionPoolService(ctx, options = {}) {
       }
       return state;
     },
+    queueStopItem,
     setQueueState: p => publication.queuePatch(p || {}),
     // 上品记录 / 失败记录（点「失败 N · 查看」）
     // fallbackOperator：老记录里存成「本机」的，展示时用当前账号名字代替（不修改历史文件）

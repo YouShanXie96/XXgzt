@@ -2262,6 +2262,9 @@ function pickShopCategoryScript(names) {
     var passList=groups.filter(function(gn){
       if(boxOf(gn))return false;
       if(gn.getAttribute&&gn.getAttribute('data-xx-cat-expanded')==='1')return false;
+      if(gn.getAttribute&&gn.getAttribute('aria-expanded')==='true')return false;
+      if(/open|expanded/i.test(String(gn.className||''))&&gn.getAttribute('aria-expanded')!=='false')return false;
+      if(gn.querySelector&&gn.querySelector('[data-xx-cat-expanded="1"],[aria-expanded="true"],.next-tree-switcher_open,.next-menu-sub-menu'))return false;
       var gt=norm(ownLabelText(gn));
       return gt&&gt.length<=30;
     });
@@ -2288,7 +2291,7 @@ function pickShopCategoryScript(names) {
 
 /**
  * 读取本店「店铺中分类」的全部选项（设置页「刷新」用）：
- * 打开下拉 → 展开所有父分组/子分类 → 读可见选项（分组标题 + 一级/二级带复选框分类）→ 关下拉。
+ * 打开下拉 → 展开所有父分组/子分类（防重复点击折叠）→ 读可见选项（分组标题 + 一级/二级带复选框分类）→ 关下拉。
  * 页面没渲染出这个字段时返回 no-field，由调用方提示「请在店铺发布页确认」。
  */
 function readShopCategoryOptionsScript() {
@@ -2326,7 +2329,7 @@ function readShopCategoryOptionsScript() {
   }
   function ownLabel(n){
     try{
-      var lbl=n.querySelector('.next-menu-item-text,.next-tree-node-label,[class*="node-title"],[class*="item-text"]');
+      var lbl=n.querySelector('.next-menu-item-text,.next-tree-node-label,[class*="node-title"],[class*="item-text"],[class*="group-label"]');
       if(lbl&&(!lbl.closest||!lbl.closest('.next-tree-node,.next-menu-item,[role="treeitem"],li')||lbl.closest('.next-tree-node,.next-menu-item,[role="treeitem"],li')===n)){
         var lt=String(dtxt(lbl)||'').replace(/\\s+/g,' ').trim();
         if(lt&&lt.length<=40)return lt;
@@ -2342,6 +2345,7 @@ function readShopCategoryOptionsScript() {
           var tag=String(nd.tagName||'').toUpperCase();
           var cls=String(nd.className||'');
           if(tag==='UL'||tag==='OL'||/child-tree|sub-menu|tree-node|menu-item/.test(cls))continue;
+          if(nd.getAttribute&&nd.getAttribute('role')==='group')continue;
           out+=' '+String(dtxt(nd)||'');
         }
       }
@@ -2351,13 +2355,14 @@ function readShopCategoryOptionsScript() {
   }
   function collectShopCatNodes(){
     var list=[],docs2=xxDocs();
-    var sels=['.next-tree-node','.next-menu-item','[role="treeitem"]','[role="option"]','[role="menuitem"]','li[class*="menu-item"]','li[class*="option"]'];
+    var sels=['.next-tree-node','.next-menu-item','.next-menu-group-label','[role="treeitem"]','[role="option"]','[role="menuitem"]','li[class*="menu-item"]','li[class*="option"]'];
     for(var d=0;d<docs2.length;d++){
       for(var s=0;s<sels.length;s++){
         var ns;try{ns=docs2[d].querySelectorAll(sels[s]);}catch(e){continue;}
         for(var i=0;i<ns.length;i++){
           var n=ns[i];
-          if(!dvis(n)||isItemPart(n))continue;
+          if(!dvis(n))continue;
+          if(isItemPart(n)&&!/next-menu-group-label/.test(String(n.className||'')))continue;
           var t=ownLabel(n);
           if(!t||t.length>60)continue;
           if(list.indexOf(n)<0)list.push(n);
@@ -2367,7 +2372,7 @@ function readShopCategoryOptionsScript() {
     return list.filter(function(n){
       return !list.some(function(m){
         if(m===n||!n.contains||!n.contains(m))return false;
-        var inSub=m.closest&&m.closest('.next-tree-child-tree,.next-menu-sub-menu,ul,ol');
+        var inSub=m.closest&&m.closest('.next-tree-child-tree,.next-menu-sub-menu,[role="group"],ul,ol');
         if(inSub&&n.contains(inSub)&&inSub!==n)return false;
         return true;
       });
@@ -2397,7 +2402,7 @@ function readShopCategoryOptionsScript() {
           if(sw.closest&&sw.closest('.next-select,.next-select-trigger')===trigger)continue;
           if(sw.getAttribute&&sw.getAttribute('data-xx-cat-expanded')==='1')continue;
           if(sw.getAttribute&&sw.getAttribute('aria-expanded')==='true')continue;
-          if(/open|expanded/.test(String(sw.className||''))&&sw.getAttribute('aria-expanded')!=='false')continue;
+          if(/open|expanded/i.test(String(sw.className||''))&&sw.getAttribute('aria-expanded')!=='false')continue;
           try{
             if(sw.setAttribute)sw.setAttribute('data-xx-cat-expanded','1');
             sw.click();
@@ -2412,6 +2417,10 @@ function readShopCategoryOptionsScript() {
       var nd=curNodes[ex];
       if(boxOf(nd))continue;
       if(nd.getAttribute&&nd.getAttribute('data-xx-cat-expanded')==='1')continue;
+      if(nd.getAttribute&&nd.getAttribute('aria-expanded')==='true')continue;
+      if(/open|expanded/i.test(String(nd.className||''))&&nd.getAttribute('aria-expanded')!=='false')continue;
+      // 节点内部已经有独立的展开开关（或已经点击过展开开关），绝不再点一次 <li> 本身导致刚打开又折回去
+      if(nd.querySelector&&nd.querySelector('.next-tree-node-switcher,[class*="switcher"],[class*="expand"],[class*="arrow"],[data-xx-cat-expanded="1"],[aria-expanded="true"],.next-tree-switcher_open,.next-menu-sub-menu'))continue;
       try{
         if(nd.setAttribute)nd.setAttribute('data-xx-cat-expanded','1');
         nd.click();
@@ -2420,39 +2429,71 @@ function readShopCategoryOptionsScript() {
     }
     return count;
   }
-  for(var pass=0;pass<2;pass++){
+  for(var pass=0;pass<3;pass++){
     var exp=expandCollapsed();
     if(!exp)break;
     await wait(450);
   }
   var nodes=collectShopCatNodes();
   function findAncestorGroup(n){
-    var sub=n.closest&&n.closest('.next-menu-sub-menu,.next-tree-child-tree,[class*="sub-menu"],[class*="child-tree"]');
-    if(sub&&sub.parentElement){
-      var parentNode=sub.parentElement.closest('.next-tree-node,.next-menu-sub-menu,[role="treeitem"],li')||sub.parentElement;
-      if(parentNode&&parentNode!==n){
-        var ht=ownLabel(parentNode);
-        if(ht&&ht.length<=40&&ht!==ownLabel(n))return ht;
+    var sub=n.closest&&n.closest('.next-menu-sub-menu,.next-tree-child-tree,.next-menu-group,[role="group"],[class*="sub-menu"],[class*="child-tree"]');
+    if(sub){
+      var grpLbl=sub.querySelector&&sub.querySelector('.next-menu-group-label');
+      if(grpLbl&&grpLbl!==n&&(!sub.contains||sub.contains(grpLbl))){
+        var gl=ownLabel(grpLbl);
+        if(gl&&gl.length<=40&&gl!==ownLabel(n))return gl;
+      }
+      if(sub.parentElement){
+        var parentNode=sub.parentElement.closest('.next-tree-node,.next-menu-sub-menu,[role="treeitem"],li')||sub.parentElement;
+        if(parentNode&&parentNode!==n){
+          var ht=ownLabel(parentNode);
+          if(ht&&ht.length<=40&&ht!==ownLabel(n))return ht;
+        }
       }
     }
     return '';
   }
-  var items=[],flatGroup='',level1Group='',seen={};
+  function rectLeft(n){
+    try{
+      var tgt=(n.querySelector&&n.querySelector('input[type="checkbox"],.next-checkbox,.next-tree-node-label,.next-menu-item-text'))||n;
+      var r=tgt.getBoundingClientRect&&tgt.getBoundingClientRect();
+      return r&&r.width>=0?Math.round(r.left):null;
+    }catch(e){return null;}
+  }
+  var items=[],flatGroup='',level1Group='',usedNestedOrIndent=false,baseLeft=null,seen={};
   for(var k=0;k<nodes.length;k++){
     var n=nodes[k],t=ownLabel(n);
     if(!t||t.length>40)continue;
+    var lPos=rectLeft(n);
     var hasBox=Boolean(boxOf(n));
-    if(!hasBox){flatGroup=t;continue;}
+    if(!hasBox){
+      flatGroup=t;
+      usedNestedOrIndent=false;
+      continue;
+    }
+    if(baseLeft===null&&lPos!==null)baseLeft=lPos;
     var anc=findAncestorGroup(n);
     var lvlAttr=n.getAttribute&&n.getAttribute('aria-level');
     var lvl=lvlAttr?Number(lvlAttr):0;
+    var indented=Boolean(baseLeft!==null&&lPos!==null&&lPos>baseLeft+8);
     var g='';
     if(anc){
       g=anc;
+      usedNestedOrIndent=true;
     }else if(lvl>=2){
       g=level1Group||flatGroup;
+      usedNestedOrIndent=true;
     }else if(lvl===1){
       level1Group=t;
+      flatGroup='';
+      usedNestedOrIndent=false;
+      g='';
+    }else if(indented&&flatGroup){
+      g=flatGroup;
+      usedNestedOrIndent=true;
+    }else if(usedNestedOrIndent&&!indented){
+      // 嵌套分组结束后的顶级兄弟节点，清掉残留的 flatGroup，避免「爆多多」被误挂到前一个父分组下
+      flatGroup='';
       g='';
     }else{
       g=flatGroup;
@@ -2462,6 +2503,45 @@ function readShopCategoryOptionsScript() {
     seen[key]=1;
     items.push({name:t,group:g,path:g?g+' / '+t:t});
   }
+  // 补充：如果 DOM 只拿到了扁平列表，尝试从 __SELL_STATE__ 的店铺分类组件数据源补全父子层级
+  try{
+    var st=window.__SELL_STATE__&&window.__SELL_STATE__.getState&&window.__SELL_STATE__.getState();
+    var propsMap=st&&(st.components||st.models||(st.getState&&st.getState().components));
+    var candSources=[];
+    if(st&&typeof st.getComponentProps==='function'){
+      ['shopcat','shopCat','sellerCat','shopCategories','sellerCids','shopCatList'].forEach(function(key){
+        try{var p=st.getComponentProps(key);if(p&&Array.isArray(p.dataSource))candSources.push(p.dataSource);}catch(e){}
+      });
+    }
+    if(propsMap&&typeof propsMap==='object'){
+      Object.keys(propsMap).forEach(function(k){
+        if(/shopcat|sellercat|sellercid/i.test(k)){
+          var ds=propsMap[k]&&(propsMap[k].dataSource||(propsMap[k].props&&propsMap[k].props.dataSource));
+          if(Array.isArray(ds))candSources.push(ds);
+        }
+      });
+    }
+    if(candSources.length&&(!items.length||!items.some(function(it){return Boolean(it.group);}))){
+      var stItems=[],stSeen={};
+      var walkDs=function(arr,parentName){
+        for(var idx=0;idx<arr.length;idx++){
+          var node=arr[idx];if(!node||typeof node!=='object')continue;
+          var nm=String(node.label||node.name||node.text||node.title||'').trim();
+          var kids=Array.isArray(node.children)?node.children:[];
+          if(nm&&!kids.length){
+            var grp=parentName||'';
+            var sk=grp+'|'+nm;
+            if(!stSeen[sk]){stSeen[sk]=1;stItems.push({name:nm,group:grp,path:grp?grp+' / '+nm:nm});}
+          }
+          if(kids.length)walkDs(kids,nm||parentName);
+        }
+      };
+      walkDs(candSources[0],'');
+      if(stItems.length&&(stItems.some(function(it){return Boolean(it.group);})||!items.length)){
+        items=stItems;
+      }
+    }
+  }catch(e){}
   // 关下拉：Escape + 点空白，避免遮住后面的字段
   try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
   try{if(document.body)document.body.click();}catch(e){}
@@ -2962,10 +3042,7 @@ function fillRequiredGapsScript(hints) {
  *   3) 打开下拉框，优先匹配采集/参数里的省份（支持下拉内搜索框）；
  *   4) 拿不到省份，或者这个省份在下拉里不存在时，自动选择下拉框里的「其他」并回读校验。
  */
-function buildEnsureProvinceScript(candidates) {
-  const list = JSON.stringify((Array.isArray(candidates) ? candidates : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 8));
-  return `(async function(){${NATIVE_SET}${DIALOG_HELPERS}
-  var wantList=${list};
+const PROVINCE_COMMON_HELPERS = `
   function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
   function vis(n){return dvis(n);}
   function norm(s){return String(s||'').replace(/[:：*\\s\\u200b\\u00a0（）()【】\\[\\]]/g,'').replace(/(?:重要|推荐|热|新|必填)+$/,'');}
@@ -2973,7 +3050,18 @@ function buildEnsureProvinceScript(candidates) {
   function isPlaceholder(s){var t=norm(s);return !t||/^(?:请选择|请选|选择|选择省份|省份|请输入)$/.test(t);}
   function pt(el){
     if(!el||!el.getBoundingClientRect)return null;
-    try{var r=el.getBoundingClientRect();if(!r||(!r.width&&!r.height))return null;return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}catch(e){return null;}
+    try{
+      var r=el.getBoundingClientRect();
+      if(!r||(!r.width&&!r.height))return null;
+      var ox=0,oy=0,curDoc=el.ownerDocument;
+      while(curDoc&&curDoc!==document&&curDoc.defaultView&&curDoc.defaultView.frameElement){
+        var fe=curDoc.defaultView.frameElement;
+        var fr=fe.getBoundingClientRect&&fe.getBoundingClientRect();
+        if(fr){ox+=fr.left;oy+=fr.top;}
+        curDoc=fe.ownerDocument;
+      }
+      return {x:Math.round(ox+r.left+r.width/2),y:Math.round(oy+r.top+r.height/2)};
+    }catch(e){return null;}
   }
   function findProvinceField(){
     var docs=xxDocs();
@@ -2987,8 +3075,8 @@ function buildEnsureProvinceScript(candidates) {
         var t=norm(dtxt(n));
         if(t!=='省份'&&t!=='产地省份'&&t!=='所在省份')continue;
         var row=n.closest('[class*="info-wrapper-wrap"],.next-form-item,[class*="form-item"],[class*="formItem"],tr,li')||n.parentElement;
-        var box=n.closest('[class*="label-container"]')||n.parentElement;
-        var comp=(box&&box.nextElementSibling)||(row&&row.querySelector('[class*="component-wrap"],.next-form-item-control'))||row||box;
+        var box=n.closest('[class*="label-container"]')||(n.parentElement!==row?n.parentElement:null);
+        var comp=(box&&box.nextElementSibling&&(!row||row.contains(box.nextElementSibling))?box.nextElementSibling:null)||(row&&row.querySelector('[class*="component-wrap"],.next-form-item-control'))||row||n.parentElement;
         if(!comp)continue;
         var hasCtrl=Boolean(comp.querySelector('select,.next-select,.next-cascader,[class*="select-trigger"],[role="combobox"],[class*="Select"],input'));
         if(!hasCtrl&&row)comp=row;
@@ -2999,6 +3087,118 @@ function buildEnsureProvinceScript(candidates) {
     }
     return best;
   }
+  function readTriggerVal(trig){
+    if(!trig)return '';
+    var valNode=trig.querySelector&&trig.querySelector('.next-select-values .next-select-value,.next-select-values,.next-select-inner,[class*="select-value"]');
+    var t=valNode?dtxt(valNode):'';
+    if(!t){
+      var inp=trig.querySelector&&trig.querySelector('input:not([type=hidden])');
+      if(inp&&String(inp.value||'').trim())t=String(inp.value).trim();
+    }
+    if(!t)t=dtxt(trig);
+    return String(t||'').replace(/\\s+/g,' ').trim();
+  }
+  function findProvinceOverlays(trig,requireOpts){
+    var docs=xxDocs(),out=[];
+    var sels=[
+      '.next-overlay-wrapper.opened .next-overlay-inner',
+      '.next-overlay-wrapper.opened .next-menu',
+      '.next-select-popup-wrap',
+      '.next-overlay-inner',
+      '.next-menu-wrapper',
+      '[role="listbox"]',
+      '[class*="overlay-inner"]',
+      '[class*="dropdown-menu"]',
+      '[class*="popup-wrap"]',
+      '[class*="select-dropdown"]'
+    ];
+    for(var d=0;d<docs.length;d++){
+      for(var s=0;s<sels.length;s++){
+        var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
+        for(var i=0;i<ns.length;i++){
+          var el=ns[i];
+          if(!vis(el)||out.indexOf(el)>=0)continue;
+          if(trig&&(el===trig||(el.contains&&el.contains(trig))))continue;
+          if(requireOpts&&!el.querySelector('.next-menu-item,[role="option"],li,[class*="option"],[class*="menu-item"],[class*="select-item"]'))continue;
+          out.push(el);
+        }
+      }
+    }
+    // 兜底：部分新版组件下拉外层只带 popup / dropdown / overlay 类名，选项是普通 <div>
+    if(!out.length){
+      for(var d2=0;d2<docs.length;d2++){
+        var fb;try{fb=docs[d2].querySelectorAll('[class*="overlay"],[class*="popup"],[class*="dropdown"]');}catch(e){continue;}
+        for(var j=0;j<fb.length;j++){
+          var ov=fb[j];
+          if(!vis(ov)||out.indexOf(ov)>=0)continue;
+          if(trig&&(ov===trig||(ov.contains&&ov.contains(trig))))continue;
+          var r=ov.getBoundingClientRect&&ov.getBoundingClientRect();
+          if(r&&(r.width>720||r.height<16))continue;
+          var tx=norm(dtxt(ov));
+          if(/其他|其它|北京|上海|广东|福建|浙江/.test(tx))out.push(ov);
+        }
+      }
+    }
+    var provOverlays=out.filter(function(ov){
+      var txt=norm(dtxt(ov));
+      return /其他|其它|北京|上海|广东|福建|浙江/.test(txt);
+    });
+    return provOverlays.length?provOverlays:out;
+  }
+  function collectProvinceOpts(overlays){
+    var out=[],seen=[];
+    var optSel='.next-menu-item,[role="option"],li,[class*="option"],[class*="menu-item"],[class*="select-item"]';
+    for(var o=0;o<overlays.length;o++){
+      var ns=[];
+      try{ns=Array.prototype.slice.call(overlays[o].querySelectorAll(optSel));}catch(e){ns=[];}
+      if(!ns.length){
+        try{
+          ns=Array.prototype.slice.call(overlays[o].querySelectorAll('div,span,a')).filter(function(n){
+            if(!vis(n)||(n.children&&n.children.length>2))return false;
+            if(n.querySelector&&n.querySelector('input'))return false;
+            var tx=norm(dtxt(n));
+            return Boolean(tx&&tx.length<=24);
+          });
+        }catch(e){ns=[];}
+      }
+      for(var i=0;i<ns.length;i++){
+        var n=ns[i];
+        if(!vis(n))continue;
+        if(n.querySelector&&n.querySelector('input'))continue;
+        var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+        var nt=norm(t);
+        if(!nt||nt.length>30||/^(?:请选择|请输入|搜索|无匹配|暂无数据|加载中)$/.test(nt))continue;
+        if(seen.indexOf(n)<0){seen.push(n);out.push({el:n,text:t,norm:nt,core:coreProv(t)});}
+      }
+    }
+    return out;
+  }
+  function matchProvinceOpts(opts,targets){
+    for(var c=0;c<targets.length;c++){
+      var wn=norm(targets[c]),wc=coreProv(targets[c]);
+      if(!wn)continue;
+      var hit=opts.find(function(o){return o.norm===wn;})
+        ||opts.find(function(o){return wc&&o.core&&o.core===wc;})
+        ||opts.find(function(o){return wc.length>=2&&o.core&&(o.core.indexOf(wc)===0||wc.indexOf(o.core)===0)&&o.core.length<=wc.length+6;});
+      if(hit)return hit;
+    }
+    return null;
+  }
+  function findOverlaySearchInput(overlays){
+    for(var oi=0;oi<overlays.length;oi++){
+      try{
+        var cand=overlays[oi].querySelector('input:not([type=hidden]):not([readonly]):not([disabled])');
+        if(cand&&vis(cand))return cand;
+      }catch(e){}
+    }
+    return null;
+  }
+`;
+
+function buildEnsureProvinceScript(candidates) {
+  const list = JSON.stringify((Array.isArray(candidates) ? candidates : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 8));
+  return `(async function(){${NATIVE_SET}${DIALOG_HELPERS}${PROVINCE_COMMON_HELPERS}
+  var wantList=${list};
   var field=findProvinceField();
   if(!field)return JSON.stringify({ok:true,skipped:true,reason:'no-field'});
   var comp=field.comp;
@@ -3027,18 +3227,7 @@ function buildEnsureProvinceScript(candidates) {
   }
   // Fusion / Next Select / Combobox
   var trig=(comp.querySelector&&comp.querySelector('.next-select,.next-cascader,[class*="select-trigger"],[role="combobox"],[class*="Select"]'))||comp;
-  function readVal(){
-    if(!trig)return '';
-    var valNode=trig.querySelector&&trig.querySelector('.next-select-values .next-select-value,.next-select-values,.next-select-inner,[class*="select-value"]');
-    var t=valNode?dtxt(valNode):'';
-    if(!t){
-      var inp=trig.querySelector&&trig.querySelector('input:not([type=hidden])');
-      if(inp&&String(inp.value||'').trim())t=String(inp.value).trim();
-    }
-    if(!t)t=dtxt(trig);
-    return String(t||'').replace(/\\s+/g,' ').trim();
-  }
-  var initialVal=readVal();
+  var initialVal=readTriggerVal(trig);
   if(!isPlaceholder(initialVal)){
     return JSON.stringify({ok:true,already:true,picked:initialVal,via:'existing'});
   }
@@ -3051,57 +3240,12 @@ function buildEnsureProvinceScript(candidates) {
       el.dispatchEvent(new Event('change',{bubbles:true}));
     }catch(e){}
   }
-  function findOverlays(requireOpts){
-    var docs=xxDocs(),out=[];
-    var sels=['.next-overlay-wrapper.opened .next-overlay-inner','.next-overlay-wrapper.opened .next-menu','.next-select-popup-wrap','.next-overlay-inner','.next-menu-wrapper','[role="listbox"]','[class*="overlay-inner"]','[class*="dropdown-menu"]'];
-    for(var d=0;d<docs.length;d++){
-      for(var s=0;s<sels.length;s++){
-        var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
-        for(var i=0;i<ns.length;i++){
-          if(!vis(ns[i])||out.indexOf(ns[i])>=0)continue;
-          if(requireOpts&&!ns[i].querySelector('.next-menu-item,[role="option"],li,[class*="option"]'))continue;
-          out.push(ns[i]);
-        }
-      }
-    }
-    var provOverlays=out.filter(function(ov){
-      var txt=norm(dtxt(ov));
-      return /其他|其它|北京|上海|广东|福建|浙江/.test(txt);
-    });
-    return provOverlays.length?provOverlays:out;
-  }
-  function collectOpts(overlays){
-    var out=[],seen=[];
-    for(var o=0;o<overlays.length;o++){
-      var ns;try{ns=overlays[o].querySelectorAll('.next-menu-item,[role="option"],li,[class*="option"]');}catch(e){continue;}
-      for(var i=0;i<ns.length;i++){
-        var n=ns[i];
-        if(!vis(n))continue;
-        if(n.querySelector&&n.querySelector('input'))continue;
-        var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
-        var nt=norm(t);
-        if(!nt||nt.length>30||/^(?:请选择|请输入|搜索|无匹配|暂无数据|加载中)$/.test(nt))continue;
-        if(seen.indexOf(n)<0){seen.push(n);out.push({el:n,text:t,norm:nt,core:coreProv(t)});}
-      }
-    }
-    return out;
-  }
-  function matchOpts(opts,targets){
-    for(var c=0;c<targets.length;c++){
-      var wn=norm(targets[c]),wc=coreProv(targets[c]);
-      if(!wn)continue;
-      var hit=opts.find(function(o){return o.norm===wn;})
-        ||opts.find(function(o){return wc&&o.core&&o.core===wc;})
-        ||opts.find(function(o){return wc.length>=2&&o.core&&(o.core.indexOf(wc)===0||wc.indexOf(o.core)===0)&&o.core.length<=wc.length+6;});
-      if(hit)return hit;
-    }
-    return null;
-  }
   var fireEl=(trig.querySelector&&trig.querySelector('.next-select-trigger,.next-select-inner,.next-select-arrow,input'))||trig;
+  try{if(fireEl.scrollIntoView)fireEl.scrollIntoView({block:'center'});}catch(e){}
   var triggerPoint=pt(fireEl)||pt(trig);
-  var overlays=findOverlays(true);
-  if(!overlays.length||!collectOpts(overlays).length){
-    try{if(fireEl.scrollIntoView)fireEl.scrollIntoView({block:'center'});}catch(e){}
+  var neutralPoint=pt(field.label);
+  var overlays=findProvinceOverlays(trig,true);
+  if(!overlays.length||!collectProvinceOpts(overlays).length){
     try{
       var ev={bubbles:true,cancelable:true,view:window};
       fireEl.dispatchEvent(new PointerEvent('pointerdown',ev));
@@ -3111,38 +3255,32 @@ function buildEnsureProvinceScript(candidates) {
       fireEl.click();
     }catch(e){}
     await wait(450);
-    overlays=findOverlays(true);
+    overlays=findProvinceOverlays(trig,true);
     if(!overlays.length&&fireEl!==trig){
       try{trig.click();}catch(e){}
       await wait(350);
-      overlays=findOverlays(true);
+      overlays=findProvinceOverlays(trig,true);
     }
   }
   if(!overlays.length){
-    return JSON.stringify({ok:false,reason:'no-overlay',point:triggerPoint});
+    return JSON.stringify({ok:false,reason:'no-overlay',overlayOpen:false,point:triggerPoint,neutralPoint:neutralPoint});
   }
-  var opts=collectOpts(overlays);
-  var searchInp=null;
-  for(var oi=0;oi<overlays.length&&!searchInp;oi++){
-    try{
-      var cand=overlays[oi].querySelector('input:not([type=hidden]):not([readonly]):not([disabled])');
-      if(cand&&vis(cand))searchInp=cand;
-    }catch(e){}
-  }
+  var opts=collectProvinceOpts(overlays);
+  var searchInp=findOverlaySearchInput(overlays);
   var searchPoint=pt(searchInp);
-  var hit=wantList.length?matchOpts(opts,wantList):null;
+  var hit=wantList.length?matchProvinceOpts(opts,wantList):null;
   if(!hit&&wantList.length&&searchInp){
     var qText=coreProv(wantList[0])||wantList[0];
     setSearchText(searchInp,qText);
     await wait(300);
-    overlays=findOverlays(false);
-    opts=collectOpts(overlays);
-    hit=matchOpts(opts,wantList);
+    overlays=findProvinceOverlays(trig,false);
+    opts=collectProvinceOpts(overlays);
+    hit=matchProvinceOpts(opts,wantList);
     if(!hit){
       setSearchText(searchInp,'');
       await wait(300);
-      overlays=findOverlays(false);
-      opts=collectOpts(overlays);
+      overlays=findProvinceOverlays(trig,false);
+      opts=collectProvinceOpts(overlays);
     }
   }
   var usedFallback=false;
@@ -3151,34 +3289,34 @@ function buildEnsureProvinceScript(candidates) {
     if(!hit&&searchInp){
       setSearchText(searchInp,'其他');
       await wait(300);
-      overlays=findOverlays(false);
-      opts=collectOpts(overlays);
+      overlays=findProvinceOverlays(trig,false);
+      opts=collectProvinceOpts(overlays);
       hit=opts.find(function(o){return o.norm==='其他'||o.norm==='其它';})||null;
     }
     usedFallback=Boolean(hit);
   }
   if(!hit){
     try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
-    return JSON.stringify({ok:false,reason:'no-other-option',point:triggerPoint,searchPoint:searchPoint,available:opts.slice(0,10).map(function(o){return o.text;})});
+    return JSON.stringify({ok:false,reason:'no-other-option',overlayOpen:findProvinceOverlays(trig,false).length>0,point:triggerPoint,searchPoint:searchPoint,neutralPoint:neutralPoint,available:opts.slice(0,10).map(function(o){return o.text;})});
   }
   try{if(hit.el.scrollIntoView)hit.el.scrollIntoView({block:'nearest'});}catch(e){}
   var optPoint=pt(hit.el);
   try{
     var oev={bubbles:true,cancelable:true,view:window};
-    var clickInner=(hit.el.querySelector&&hit.el.querySelector('.next-menu-item-inner,span,a'))||hit.el;
     hit.el.dispatchEvent(new PointerEvent('pointerdown',oev));
     hit.el.dispatchEvent(new MouseEvent('mousedown',oev));
     hit.el.dispatchEvent(new PointerEvent('pointerup',oev));
     hit.el.dispatchEvent(new MouseEvent('mouseup',oev));
     hit.el.click();
-    if(clickInner&&clickInner!==hit.el)clickInner.click();
   }catch(e){}
   await wait(350);
-  var after=readVal();
+  var after=readTriggerVal(trig);
   var ok=!isPlaceholder(after);
+  var stillOpen=findProvinceOverlays(trig,false).length>0;
   // 只有选成功且弹窗未自动关闭时才 Escape；选不中时保持下拉打开，方便紧接着用 CDP 真实鼠标点击 optionPoint / searchPoint。
-  if(ok){
-    try{if(findOverlays(true).length)document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
+  if(ok&&stillOpen){
+    try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
+    stillOpen=findProvinceOverlays(trig,false).length>0;
   }
   return JSON.stringify({
     ok:ok,
@@ -3186,11 +3324,109 @@ function buildEnsureProvinceScript(candidates) {
     target:hit.text,
     usedFallback:usedFallback,
     hadCandidates:wantList.length>0,
+    overlayOpen:stillOpen,
     point:triggerPoint,
     optionPoint:optPoint,
     searchPoint:searchPoint,
+    neutralPoint:neutralPoint,
     reason:ok?'':'readback-empty'
   });
+})()`;
+}
+
+/**
+ * 只读读取「* 省份」触发框、已打开下拉框及其选项/搜索框视口坐标（绝不主动点开/关触发框，避免来回误切换）。
+ */
+function locateProvinceOverlayScript(candidates) {
+  const list = JSON.stringify((Array.isArray(candidates) ? candidates : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 8));
+  return `(function(){${NATIVE_SET}${DIALOG_HELPERS}${PROVINCE_COMMON_HELPERS}
+  var wantList=${list};
+  var field=findProvinceField();
+  if(!field)return JSON.stringify({ok:true,skipped:true,reason:'no-field',overlayOpen:false});
+  var comp=field.comp;
+  var trig=(comp.querySelector&&comp.querySelector('.next-select,.next-cascader,[class*="select-trigger"],[role="combobox"],[class*="Select"]'))||comp;
+  var fireEl=(trig.querySelector&&trig.querySelector('.next-select-trigger,.next-select-inner,.next-select-arrow,input'))||trig;
+  var current=readTriggerVal(trig);
+  var overlays=findProvinceOverlays(trig,false);
+  var overlayOpen=overlays.length>0;
+  if(!isPlaceholder(current)){
+    return JSON.stringify({ok:true,already:true,picked:current,overlayOpen:overlayOpen,neutralPoint:pt(field.label)});
+  }
+  var opts=collectProvinceOpts(overlays);
+  var hit=wantList.length?matchProvinceOpts(opts,wantList):null;
+  var usedFallback=false;
+  if(!hit){
+    hit=opts.find(function(o){return o.norm==='其他'||o.norm==='其它';})||null;
+    usedFallback=Boolean(hit);
+  }
+  if(hit){try{if(hit.el.scrollIntoView)hit.el.scrollIntoView({block:'nearest'});}catch(e){}}
+  var searchInp=findOverlaySearchInput(overlays);
+  return JSON.stringify({
+    ok:false,
+    picked:'',
+    overlayOpen:overlayOpen,
+    target:hit?hit.text:(wantList[0]||'其他'),
+    usedFallback:usedFallback,
+    point:pt(fireEl)||pt(trig),
+    optionPoint:hit?pt(hit.el):null,
+    searchPoint:pt(searchInp),
+    neutralPoint:pt(field.label),
+    available:opts.slice(0,10).map(function(o){return o.text;})
+  });
+})()`;
+}
+
+/** 兜底：DOM 与 CDP 都无法提交时，从 __SELL_STATE__ 的省份组件数据源查找对应项（优先候选，否则「其他」）并回读 DOM。 */
+function writeProvinceViaStateScript(candidates) {
+  const list = JSON.stringify((Array.isArray(candidates) ? candidates : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 8));
+  return `(async function(){${NATIVE_SET}${DIALOG_HELPERS}${PROVINCE_COMMON_HELPERS}
+  var wantList=${list};
+  var field=findProvinceField();
+  if(!field)return JSON.stringify({ok:false,reason:'no-field'});
+  var comp=field.comp;
+  var trig=(comp.querySelector&&comp.querySelector('.next-select,.next-cascader,[class*="select-trigger"],[role="combobox"],[class*="Select"]'))||comp;
+  try{
+    var st=window.__SELL_STATE__&&window.__SELL_STATE__.getState&&window.__SELL_STATE__.getState();
+    var eng=st&&st.engine;
+    if(!st||!eng||typeof st.getComponentProps!=='function')return JSON.stringify({ok:false,reason:'no-engine'});
+    var keys=[];
+    try{
+      var comps=(st.components||st.models||(st.getState&&st.getState().components))||{};
+      keys=Object.keys(comps);
+    }catch(e){}
+    ['province','originProvince','prov'].forEach(function(k){if(keys.indexOf(k)<0)keys.push(k);});
+    for(var i=0;i<keys.length;i++){
+      var k=keys[i];
+      var props=null;
+      try{props=st.getComponentProps(k);}catch(e){}
+      if(!props||!Array.isArray(props.dataSource)||!props.dataSource.length)continue;
+      var labelTxt=norm(props.label||props.title||'');
+      var dsText=norm(props.dataSource.slice(0,8).map(function(x){return (x&&(x.label||x.text||x.name))||'';}).join(''));
+      if(!/省份/.test(labelTxt)&&!/其他|其它/.test(dsText))continue;
+      if(!/北京|上海|广东|福建|浙江/.test(dsText)&&!/省份/.test(labelTxt))continue;
+      var normDs=props.dataSource.map(function(d){
+        var txt=String((d&&(d.label||d.text||d.name||d.value))||'').trim();
+        return {raw:d,text:txt,norm:norm(txt),core:coreProv(txt),val:d&&d.value!==undefined?d.value:txt};
+      });
+      var hit=null,usedFallback=false;
+      for(var c=0;c<wantList.length&&!hit;c++){
+        var wn=norm(wantList[c]),wc=coreProv(wantList[c]);
+        hit=normDs.find(function(o){return o.norm===wn;})||normDs.find(function(o){return wc&&o.core===wc;})||null;
+      }
+      if(!hit){
+        hit=normDs.find(function(o){return o.norm==='其他'||o.norm==='其它';})||null;
+        usedFallback=Boolean(hit);
+      }
+      if(!hit)continue;
+      try{eng.getComponent(k).setProps({value:hit.val});}catch(e){}
+      await wait(300);
+      var after=readTriggerVal(trig);
+      if(!isPlaceholder(after)){
+        return JSON.stringify({ok:true,picked:after,usedFallback:usedFallback,via:'sell-state'});
+      }
+    }
+  }catch(e){}
+  return JSON.stringify({ok:false,reason:'state-readback-empty'});
 })()`;
 }
 
@@ -6300,48 +6536,136 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
 
   /**
    * 省份下拉（* 省份）：优先选匹配省份；获取不到省份或下拉里没有该省份时，选择下拉框里的「其他」。
-   * DOM 点击打不开/选不中时，退到 CDP 真实鼠标点坐标，再退到搜索框键入「其他」/目标并回车。
+   * DOM 点击未生效时，改用只读坐标探测 + CDP 真实鼠标点击（绝不再调回 mutating script 来回切换触发器）。
    */
   async function ensureProvince(win, candidates = []) {
-    let res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
-    if (res && !res.ok && !res.skipped) {
-      if (res.reason === 'no-overlay' && res.point && Number.isFinite(Number(res.point.x))) {
-        await cdpXY(win, Number(res.point.x), Number(res.point.y));
-        await sleep(500);
-        res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
-      }
-      if (res && !res.ok && res.reason === 'readback-empty' && res.optionPoint && Number.isFinite(Number(res.optionPoint.x))) {
-        await cdpXY(win, Number(res.optionPoint.x), Number(res.optionPoint.y));
-        await sleep(400);
-        res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 10000));
-      }
-      if (res && !res.ok && res.searchPoint && Number.isFinite(Number(res.searchPoint.x))) {
-        const searchText = String(res.target || '其他').trim() || '其他';
-        try {
-          await cdpXY(win, Number(res.searchPoint.x), Number(res.searchPoint.y));
+    const readOverlayState = async () => asJson(await evalJs(win, locateProvinceOverlayScript(candidates), 8000));
+    const closeStrayOverlay = async state => {
+      if (state && !state.overlayOpen) return;
+      try {
+        const dbg = win.webContents.debugger;
+        try { dbg.attach('1.3'); } catch { /* */ }
+        await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        await sleep(180);
+      } catch { /* */ }
+      if (state?.neutralPoint && Number.isFinite(Number(state.neutralPoint.x))) {
+        const check = await readOverlayState();
+        if (check?.overlayOpen) {
+          await cdpXY(win, Number(state.neutralPoint.x), Number(state.neutralPoint.y));
           await sleep(150);
+        }
+      }
+    };
+
+    let res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
+    if (!res) return { ok: false, reason: 'eval-failed' };
+    if (res.ok || res.skipped) return res;
+
+    let st = await readOverlayState();
+    if (st?.ok) {
+      await closeStrayOverlay(st);
+      return st;
+    }
+
+    // 1) 若下拉尚未打开，仅用 CDP 点一次 triggerPoint，然后用只读脚本测量列表和搜索框坐标
+    if (!st?.overlayOpen && (st?.point || res.point)) {
+      const tp = st?.point || res.point;
+      if (Number.isFinite(Number(tp?.x))) {
+        await cdpXY(win, Number(tp.x), Number(tp.y));
+        await sleep(500);
+        st = await readOverlayState();
+        if (st?.ok) {
+          await closeStrayOverlay(st);
+          return st;
+        }
+      }
+    }
+
+    // 2) 下拉已打开且拿到选项坐标（如「其他」）：直接 CDP 真实鼠标点击 optionPoint，并用只读脚本回读
+    const optPt = st?.optionPoint || res.optionPoint;
+    if (st?.overlayOpen && optPt && Number.isFinite(Number(optPt.x))) {
+      await cdpXY(win, Number(optPt.x), Number(optPt.y));
+      await sleep(450);
+      const afterClick = await readOverlayState();
+      if (afterClick?.ok) {
+        await closeStrayOverlay(afterClick);
+        return afterClick;
+      }
+      st = afterClick || st;
+    }
+
+    // 3) 若有下拉搜索框：输入目标省份或「其他」，过滤后按**重新测得**的 filtered optionPoint 点击（兜底才 ArrowDown+Enter）
+    const sp = st?.searchPoint || res.searchPoint;
+    if (!st?.ok && sp && Number.isFinite(Number(sp.x))) {
+      const trySearch = async text => {
+        try {
+          if (!st?.overlayOpen && st?.point && Number.isFinite(Number(st.point.x))) {
+            await cdpXY(win, Number(st.point.x), Number(st.point.y));
+            await sleep(400);
+            st = (await readOverlayState()) || st;
+          }
+          const boxPt = st?.searchPoint || sp;
+          if (!boxPt || !Number.isFinite(Number(boxPt.x))) return null;
+          await cdpXY(win, Number(boxPt.x), Number(boxPt.y));
+          await sleep(120);
           const dbg = win.webContents.debugger;
           try { dbg.attach('1.3'); } catch { /* 已附着 */ }
-          await dbg.sendCommand('Input.insertText', { text: searchText });
-          await sleep(350);
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
+          await dbg.sendCommand('Input.insertText', { text });
+          await sleep(450);
+          const filtered = await readOverlayState();
+          if (filtered?.ok) return filtered;
+          if (filtered?.optionPoint && Number.isFinite(Number(filtered.optionPoint.x))) {
+            await cdpXY(win, Number(filtered.optionPoint.x), Number(filtered.optionPoint.y));
+            await sleep(450);
+            const afterFilterClick = await readOverlayState();
+            if (afterFilterClick?.ok) return afterFilterClick;
+          }
           await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 });
           await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 });
           await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
           await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
           await sleep(400);
-          res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 10000));
-        } catch { /* ignore */ }
+          return await readOverlayState();
+        } catch {
+          return null;
+        }
+      };
+
+      const firstQuery = String(st?.target || res.target || '其他').trim() || '其他';
+      let searchRes = await trySearch(firstQuery);
+      if (searchRes?.ok) {
+        await closeStrayOverlay(searchRes);
+        return searchRes;
       }
-      if (res && !res.ok) {
-        try {
-          const dbg = win.webContents.debugger;
-          try { dbg.attach('1.3'); } catch { /* */ }
-          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
-          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
-        } catch { /* */ }
+      if (firstQuery !== '其他') {
+        st = (await readOverlayState()) || st;
+        searchRes = await trySearch('其他');
+        if (searchRes?.ok) {
+          await closeStrayOverlay(searchRes);
+          return searchRes;
+        }
+      }
+      if (searchRes) st = searchRes;
+    }
+
+    // 4) 最后兜底：从 __SELL_STATE__ 组件数据源中写入候选/「其他」并回读 DOM
+    if (!st?.ok) {
+      const viaState = asJson(await evalJs(win, writeProvinceViaStateScript(candidates), 6000));
+      if (viaState?.ok) {
+        await closeStrayOverlay(await readOverlayState());
+        return viaState;
       }
     }
-    return res || { ok: false, reason: 'eval-failed' };
+
+    const finalState = await readOverlayState();
+    await closeStrayOverlay(finalState);
+    if (finalState?.ok) return finalState;
+    return res || { ok: false, reason: 'province-not-selected' };
   }
 
   /**
@@ -8243,6 +8567,6 @@ module.exports = {
     buildOpenSkuProductScript, buildFocusSkuProductSearchScript, buildSkuProductOptionsScript, buildPickSkuProductScript, buildCreateSkuProductScript, buildSaveCreateProductScript,
     buildDetailCountScript, buildClearDetailScript, buildOpenDetailSourceScript,
     buildFillDetailSourceScript, buildConfirmDetailImportScript, buildDetailReadbackScript,
-    buildEnsureProvinceScript,
+    buildEnsureProvinceScript, locateProvinceOverlayScript, writeProvinceViaStateScript,
   },
 };

@@ -25,8 +25,8 @@ const ID_RE = /^\d{2,16}$/;
 const FILE = 'selectionpool/category-cache.json';
 const SHOP_CATS_FILE = 'selectionpool/shop-categories.json';
 const SHOP_CATS_TTL_MS = 7 * 24 * 3600 * 1000;
-// 3 = 展开并抓取店铺中分类的一级与全部二级/子分类（作废旧的仅一级缓存）
-const SHOP_CATS_VERSION = 3;
+// 4 = 修正宝贝分类隐藏子行/偏列读取，并在主来源无子分类时自动结合发布页读取完整二级子分类
+const SHOP_CATS_VERSION = 4;
 
 const ID_KEYS = ['id', 'catId', 'categoryId', 'cid', 'value', 'key'];
 const NAME_KEYS = ['name', 'catName', 'categoryName', 'text', 'label', 'title'];
@@ -253,40 +253,57 @@ function shopCategorySiteScript() {
   async function expandSubcats(docsList){
     var clicked=0;
     function waitMs(ms){return new Promise(function(r){setTimeout(r,ms);});}
-    // ① 优先点「全部展开 / 展开全部」
+    function btnLabel(el){
+      var v=(el&&(el.tagName==='INPUT'||el.tagName==='BUTTON')&&el.value)?String(el.value):'';
+      return String(v||txt(el)||'').replace(/\\s+/g,'');
+    }
+    // ① 优先点「全部展开 / 展开全部 / 展开所有分类」
     for(var d=0;d<docsList.length;d++){
       var allBtns=[];
-      try{allBtns=docsList[d].querySelectorAll('a,button,span');}catch(e){continue;}
+      try{allBtns=docsList[d].querySelectorAll('a,button,span,div,i,em,input[type="button"],input[type="submit"]');}catch(e){continue;}
       for(var i=0;i<allBtns.length;i++){
         var b=allBtns[i];
-        var bt=String(txt(b)||'').replace(/\\s+/g,'');
-        if(/^(?:全部展开|展开全部|展开所有|全部展开子分类)$/.test(bt)&&canClickExpand(b)){
+        var bt=btnLabel(b);
+        if(/^(?:全部展开|展开全部|展开所有|全部展开子分类|展开所有分类|展开全部子分类)$/.test(bt)&&canClickExpand(b)){
           try{b.click();clicked++;}catch(e){}
           break;
         }
       }
     }
-    if(clicked){await waitMs(650);}
-    // ② 逐行点开尚未展开的折叠图标 / 箭头 /「展开」开关
-    for(var d2=0;d2<docsList.length;d2++){
-      var toggles=[];
-      try{
-        toggles=docsList[d2].querySelectorAll(
-          '[aria-expanded="false"],.J_Fold,.J_Toggle,.next-table-row-expand-icon,'+
-          '[class*="expand"]:not([class*="expanded"]),[class*="toggle"],[class*="fold"],'+
-          '[class*="caret"],[class*="arrow-right"],[class*="switcher-close"]'
-        );
-      }catch(e){continue;}
-      for(var j=0;j<toggles.length&&clicked<45;j++){
-        var el=toggles[j];
-        if(el.getAttribute&&el.getAttribute('aria-expanded')==='true')continue;
-        var cls=String(el.className||'');
-        if(/expanded|open|minus|down/i.test(cls)&&!/close|fold/i.test(cls))continue;
-        if(!canClickExpand(el))continue;
-        try{el.click();clicked++;}catch(e){}
+    if(clicked){await waitMs(750);}
+    // ② 逐行点开尚未展开的折叠图标 / 箭头 /「展开」开关（最多两轮支持懒加载）
+    for(var pass=0;pass<2;pass++){
+      var roundClicked=0;
+      for(var d2=0;d2<docsList.length;d2++){
+        var toggles=[];
+        try{
+          toggles=docsList[d2].querySelectorAll(
+            '[aria-expanded="false"],.J_Fold,.J_Toggle,.next-table-row-expand-icon,'+
+            '[class*="expand"]:not([class*="expanded"]),[class*="toggle"],[class*="fold"],'+
+            '[class*="caret"],[class*="arrow-right"],[class*="switcher-close"],a,button,span'
+          );
+        }catch(e){continue;}
+        for(var j=0;j<toggles.length&&roundClicked<45;j++){
+          var el=toggles[j];
+          var tag=String(el.tagName||'').toUpperCase();
+          if(el.getAttribute&&el.getAttribute('aria-expanded')==='true')continue;
+          if(el.getAttribute&&el.getAttribute('data-xx-expanded')==='1')continue;
+          var cls=String(el.className||'');
+          var lbl=btnLabel(el);
+          if(tag==='A'||tag==='BUTTON'||tag==='SPAN'){
+            var looksLikeControl=/^(?:展开|展开子分类|查看子分类|\\+)$/.test(lbl)
+              ||(el.getAttribute&&el.getAttribute('aria-expanded')==='false')
+              ||/expand|toggle|fold|caret|arrow|switcher|J_Fold|J_Toggle/i.test(cls);
+            if(!looksLikeControl)continue;
+          }
+          if(/expanded|open|minus|down/i.test(cls)&&!/close|fold/i.test(cls))continue;
+          if(!canClickExpand(el))continue;
+          try{if(el.setAttribute)el.setAttribute('data-xx-expanded','1');el.click();clicked++;roundClicked++;}catch(e){}
+        }
       }
+      if(!roundClicked)break;
+      await waitMs(750);
     }
-    if(clicked){await waitMs(650);}
     return clicked;
   }
   function pushHierarchy(rowsList){
@@ -403,13 +420,12 @@ function shopCategorySiteScript() {
           continue;
         }
         if(tr.querySelector&&tr.querySelector('th')&&!tr.querySelector('td'))continue;
+        if(tr.closest&&tr.closest('[role="dialog"],.next-dialog,[class*="modal"]'))continue;
         var rowVis=vis(tr);
         var trCls=String(tr.className||'');
         var isHiddenSub=false;
         if(!rowVis){
-          // 允许同表格内折叠隐藏的子分类行，但跳过未带数据/弹窗模板行
-          var styleAttr=String((tr.getAttribute&&tr.getAttribute('style'))||'');
-          if(!/display\\s*:\\s*none/i.test(styleAttr)&&!/sub|child|level/i.test(trCls))continue;
+          if(/\\{\\{|\\}\\}/.test(String(tr.textContent||''))||/template|clone|placeholder/i.test(trCls))continue;
           isHiddenSub=true;
         }
         var cells2=directCells(tr);
@@ -425,17 +441,25 @@ function shopCategorySiteScript() {
           continue;
         }
         var targetCell=cells2[colIndex];
-        var rawCellText=String((targetCell&&(targetCell.innerText||targetCell.textContent))||'').trim();
-        var hasSubToken=/^[\\u2514\\u251c\\u2502]|^\\|--/.test(rawCellText)||/sub|child|level[-_]?[2-9]|second/i.test(trCls+' '+String(targetCell.className||''));
         var info2=cellNameAndX(targetCell,tr);
+        var shiftedCol=false;
+        if(!info2){
+          for(var sci=colIndex+1;sci<cells2.length;sci++){
+            var candInfo=cellNameAndX(cells2[sci],tr);
+            if(candInfo){targetCell=cells2[sci];info2=candInfo;shiftedCol=true;break;}
+          }
+        }
         if(!info2)continue;
+        var rawCellText=String((targetCell&&(targetCell.innerText||targetCell.textContent))||'').trim();
+        var tbCls=tr.parentElement?String(tr.parentElement.className||''):'';
+        var hasSubToken=shiftedCol||/^[\\u2514\\u251c\\u2502]|^\\|--/.test(rawCellText)||/sub|child|level[-_]?[2-9]|second/i.test(trCls+' '+String(targetCell.className||'')+' '+tbCls);
         if(!hasSubToken&&!isHiddenSub){
           if(!baseTopX||info2.x<baseTopX)baseTopX=info2.x;
           lastTopName=cleanName(info2.name);
         }else{
           var minSubX=(baseTopX||colHeaderLeft||100)+24;
           if(info2.x<minSubX)info2.x=minSubX;
-          if(hasSubToken&&lastTopName&&info2.x<=baseTopX)info2.forceGroup=lastTopName;
+          if((hasSubToken||isHiddenSub)&&lastTopName&&info2.x<=baseTopX)info2.forceGroup=lastTopName;
         }
         rows2.push(info2);
         // 如果同一行单元格内还嵌着子列表 ul/li（非嵌套 table 的情况）
@@ -575,6 +599,59 @@ function shopCategorySiteScript() {
       }
     }
     diag.c=OUT.length;
+  }
+
+  // D. 内嵌 JSON 状态兜底（仅当 DOM 没拿到子分类或整表为空时补全嵌套子分类）
+  var hasGroup=OUT.some(function(x){return Boolean(x.group);});
+  if(!OUT.length||!hasGroup){
+    var jsonOut=[];
+    var seenJson={};
+    function collectFromTree(arr,parentGroup){
+      if(!Array.isArray(arr))return;
+      for(var qi=0;qi<arr.length;qi++){
+        var node=arr[qi];
+        if(!node||typeof node!=='object'||Array.isArray(node))continue;
+        var nm=cleanName(node.name||node.catName||node.categoryName||node.title||node.label||'');
+        var kids=node.children||node.subCategories||node.subCats||node.childList||node.subList||node.items;
+        if(nm&&!badName(nm)){
+          var k=(parentGroup||'')+'|'+nm;
+          if(!seenJson[k]){
+            seenJson[k]=1;
+            jsonOut.push({name:nm,group:parentGroup||'',path:parentGroup?parentGroup+' / '+nm:nm,level:parentGroup?1:0});
+          }
+          if(Array.isArray(kids)&&kids.length)collectFromTree(kids,nm);
+        }else if(Array.isArray(kids)&&kids.length){
+          collectFromTree(kids,parentGroup);
+        }
+      }
+    }
+    var roots=[];
+    try{if(window.__INIT_DATA__)roots.push(window.__INIT_DATA__);}catch(e){}
+    try{if(window.__INITIAL_STATE__)roots.push(window.__INITIAL_STATE__);}catch(e){}
+    try{if(window.__DATA__)roots.push(window.__DATA__);}catch(e){}
+    try{if(window.g_config)roots.push(window.g_config);}catch(e){}
+    var qArr=roots.slice(),qSeen=[];
+    while(qArr.length&&jsonOut.length<300){
+      var cur=qArr.shift();
+      if(!cur||typeof cur!=='object'||qSeen.indexOf(cur)>=0)continue;
+      qSeen.push(cur);
+      if(Array.isArray(cur)){
+        var hasNested=cur.some(function(it){
+          return it&&typeof it==='object'&&!Array.isArray(it)
+            &&(it.name||it.catName||it.categoryName)
+            &&Array.isArray(it.children||it.subCategories||it.subCats||it.childList);
+        });
+        if(hasNested){collectFromTree(cur,'');continue;}
+        for(var ci2=0;ci2<cur.length;ci2++)qArr.push(cur[ci2]);
+      }else{
+        var vals=Object.values(cur);
+        for(var vi2=0;vi2<vals.length;vi2++)if(vals[vi2]&&typeof vals[vi2]==='object')qArr.push(vals[vi2]);
+      }
+    }
+    if(jsonOut.length&&(jsonOut.some(function(x){return Boolean(x.group);})||!OUT.length)){
+      OUT=jsonOut;
+      diag.d=OUT.length;
+    }
   }
 
   diag.total=OUT.length;
@@ -951,8 +1028,29 @@ function createCategoryService({ repo, ctx, taobaoApi, editorStore }) {
       await writeJson(SHOP_CATS_FILE, data);
       return { ok: true, storeId, items, source, readAt: data.stores[storeId].at };
     };
+    const mergeShopCats = (primary, secondary) => {
+      const prim = normalizeShopCatItems(primary);
+      const sec = normalizeShopCatItems(secondary);
+      if (!prim.length) return sec;
+      if (!sec.length) return prim;
+      const groupSet = new Set(prim.map(x => x.group).filter(Boolean));
+      const seen = new Set(prim.map(x => `${x.group}|${x.name}`));
+      const out = [...prim];
+      for (const row of sec) {
+        // 如果主结果已经把 row.name 当作包含子分类的分组父名，就不要再追加同名的扁平项
+        if (!row.group && groupSet.has(row.name)) continue;
+        const k = `${row.group}|${row.name}`;
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push(row);
+        }
+      }
+      return out.slice(0, 300);
+    };
+
     // ① 天猫宝贝分类管理页
     let siteDiag = '';
+    let siteItems = [];
     for (let attempt = 0; attempt < 2; attempt++) {
       let res = null;
       try {
@@ -976,20 +1074,34 @@ function createCategoryService({ repo, ctx, taobaoApi, editorStore }) {
         return { ok: false, code: 'CHALLENGE', storeId, items: cachedItems, message: '宝贝分类页需要安全验证，请打开店铺页面完成验证后再点「刷新」' };
       }
       const items = normalizeShopCatItems(parsed?.items);
-      if (items.length) return save(items, 'siteadmin');
+      if (items.length) {
+        siteItems = items;
+        if (items.some(i => Boolean(i.group))) return save(items, 'siteadmin');
+        break;
+      }
       siteDiag = parsed?.diag ? `宝贝分类页识别明细 ${JSON.stringify(parsed.diag)}` : '宝贝分类页没有识别到分类';
     }
-    // ② 兜底：商品发布页「店铺中分类」下拉
+    // ② 兜底：商品发布页「店铺中分类」下拉（主来源未读出子分类或整表为空时必探发布页）
     let catId = ID_RE.test(C_str(input.catId)) ? C_str(input.catId) : '';
     if (!catId && Number(input.itemId) > 0) {
       const detail = await repo.detail(Number(input.itemId)).catch(() => null);
       const fromDetail = C_str(detail?.listing?.categoryId || detail?.categoryId || detail?.snapshot?.category_id);
       if (ID_RE.test(fromDetail)) catId = fromDetail;
     }
+    if (!catId && typeof repo.list === 'function') {
+      const listed = await repo.list({ size: 20 }).catch(() => ({ items: [] }));
+      for (const row of C_list(listed?.items)) {
+        const cand = C_str(row?.categoryId || row?.listing?.categoryId || row?.snapshot?.category_id);
+        if (ID_RE.test(cand)) { catId = cand; break; }
+      }
+    }
     const script = shopCatOptionsScript();
     const url = `https://sell.publish.tmall.com/tmall/publish.htm${catId ? `?catId=${catId}` : ''}`;
     let last = { ok: false, code: 'EMPTY', storeId, items: cachedItems, message: siteDiag || '没有读到店铺分类' };
-    if (!script) return cachedItems.length ? { ...last, items: cachedItems } : last;
+    if (!script) {
+      if (siteItems.length) return save(siteItems, 'siteadmin');
+      return cachedItems.length ? { ...last, items: cachedItems } : last;
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       let res = null;
       try {
@@ -1001,10 +1113,15 @@ function createCategoryService({ repo, ctx, taobaoApi, editorStore }) {
       let parsed = res;
       if (typeof res === 'string') { try { parsed = JSON.parse(res); } catch { parsed = null; } }
       if (res?.reason === 'login' || parsed?.reason === 'login') {
+        if (siteItems.length) return save(siteItems, 'siteadmin');
         return { ok: false, code: 'LOGIN', storeId, items: cachedItems, message: '店铺登录已失效，读不到店铺分类；请先在「店铺登录」重新登录这家店铺' };
       }
       const items = normalizeShopCatItems(parsed?.items);
-      if (items.length) return save(items, 'publish');
+      if (items.length) {
+        const hasPubGroups = items.some(i => Boolean(i.group));
+        const merged = hasPubGroups ? mergeShopCats(items, siteItems) : mergeShopCats(siteItems, items);
+        return save(merged, 'publish');
+      }
       last = {
         ok: false, code: parsed?.reason || 'EMPTY', storeId, items: cachedItems,
         message: siteDiag
@@ -1012,6 +1129,7 @@ function createCategoryService({ repo, ctx, taobaoApi, editorStore }) {
           : `没读到店铺分类（${parsed?.reason || 'empty'}）；请在店铺后台确认「宝贝分类」里有分类后再点「刷新」`,
       };
     }
+    if (siteItems.length) return save(siteItems, 'siteadmin-flat');
     return cachedItems.length ? { ...last, items: cachedItems } : last;
   }
 
