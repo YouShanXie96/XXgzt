@@ -85,15 +85,8 @@ const hostsBrowser = page => page === 'browser';
     }
     return result.data;
   }
-  const toastHistory={message:'',error:false,at:0};
-  function toast(message,error=false) {
-    // 同一条提示 4 秒内只显示一次：同一个登录结果会同时由“本机账号”和“店铺登录”两处上报，
-    // 用户实测会叠成两条一模一样的大红框。
-    const text=String(message??''),now=Date.now();
-    if(text&&text===toastHistory.message&&error===toastHistory.error&&now-toastHistory.at<4000)return;
-    toastHistory.message=text;toastHistory.error=error;toastHistory.at=now;
-    const el = document.createElement('div'); el.className=`toast${error?' error':''}`; el.textContent=message;
-    $('#toast-area').append(el); setTimeout(()=>el.remove(),6500);
+  function toast() {
+    // 禁用右下角全局浮层提示（需求 4：点击操作不再弹出右下角弹窗）
   }
   function showError(error) {
     const message=error?.message || String(error);
@@ -2006,9 +1999,7 @@ let complaintRenderTimer=null;
         if(p.done||['completed','success','succeeded','partial','failed','cancelled','canceled'].includes(p.status))delete state.progress[key];else state.progress[key]=p;
         renderProgress();return;
       }
-      // 内购会：需要人工处理（登录/安全验证/人工选文件）时提醒，并把任务页刷新出提示卡。
       if(p.module==='purchase-attention'){
-        toast(p.message||'内购会需要人工处理后再继续',true);
         if(state.page==='purchase')loadPage('purchase',false).catch(showError);
         return;
       }
@@ -2045,8 +2036,6 @@ let complaintRenderTimer=null;
         if(p.done){
           if(selectionpoolProgressTimer){clearTimeout(selectionpoolProgressTimer);selectionpoolProgressTimer=null;}
           delete state.progress[key];
-          // 采集成功不弹提示条：插件页面已经给出「已加入」反馈，这里只静默刷新列表。
-          if(p.toast&&p.message)toast(p.message);
           if(p.refresh&&state.page==='selectionpool')loadPage('selectionpool',false).catch(showError);
         }
         renderProgress();return;

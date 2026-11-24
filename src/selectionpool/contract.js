@@ -134,6 +134,7 @@ function toRow(raw) {
   return {
     itemId: int(r.id || r.itemId),
     productId: str(r.product_id || r.productId),
+    sku: str(r.sku || r.sku_id || r.skuId),
     platform: str(r.platform) || 'taobao',
     title: str(r.title),
     imageUrl: str(r.image_url || r.imageUrl),

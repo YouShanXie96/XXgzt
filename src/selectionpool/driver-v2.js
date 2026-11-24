@@ -652,8 +652,13 @@ function fillFormScript(pairs) {
   }
   function writable(comp){
     if(!comp||!comp.querySelector)return null;
-    var el=comp.querySelector('input:not([type=hidden]):not([readonly]):not([disabled]),textarea:not([readonly]):not([disabled])');
-    return el;
+    var els=comp.querySelectorAll('input:not([type=hidden]):not([readonly]):not([disabled]),textarea:not([readonly]):not([disabled])');
+    for(var i=0;i<els.length;i++){
+      var el=els[i];
+      if(el.closest&&el.closest('.next-select,.next-cascader,[role="combobox"],[class*="select-trigger"],[class*="Select"]'))continue;
+      return el;
+    }
+    return null;
   }
   function chooser(comp){
     if(!comp||!comp.querySelector)return null;
@@ -2122,28 +2127,71 @@ function pickShopCategoryScript(names) {
   return `(function(){${NATIVE_SET}${DIALOG_HELPERS}
   var wants=${list};
   function norm(t){return String(t||'').replace(/[\\s\\u200b\\u00a0:：*]/g,'');}
+  function isItemPart(n){
+    var cls=String((n&&n.className)||'');
+    return /(?:^|[-_\s])(?:label|title|text|switcher|indent|icon|arrow|checkbox|content|wrapper)(?:$|[-_\s])/i.test(cls);
+  }
   function boxOf(n){
     var box=null;
-    try{box=n.querySelector('input[type="checkbox"],.next-checkbox,[role="checkbox"]');}catch(e){}
+    try{
+      var all=n.querySelectorAll('input[type="checkbox"],.next-checkbox,[role="checkbox"]');
+      for(var i=0;i<all.length;i++){
+        var c=all[i];
+        var owner=c.closest?c.closest('.next-tree-node,.next-menu-item,[role="treeitem"],[role="option"],[role="menuitem"],li'):null;
+        if(!owner||owner===n){box=c;break;}
+      }
+    }catch(e){}
     return box;
+  }
+  function ownLabelText(n){
+    try{
+      var lbl=n.querySelector('.next-menu-item-text,.next-tree-node-label,[class*="node-title"],[class*="item-text"]');
+      if(lbl&&(!lbl.closest||!lbl.closest('.next-tree-node,.next-menu-item,[role="treeitem"],li')||lbl.closest('.next-tree-node,.next-menu-item,[role="treeitem"],li')===n)){
+        var lt=String(dtxt(lbl)||'').replace(/\\s+/g,' ').trim();
+        if(lt&&lt.length<=40)return lt;
+      }
+    }catch(e){}
+    var out='';
+    try{
+      var ch=n.childNodes||[];
+      for(var i=0;i<ch.length;i++){
+        var nd=ch[i];
+        if(nd.nodeType===3){out+=nd.nodeValue;}
+        else if(nd.nodeType===1){
+          var tag=String(nd.tagName||'').toUpperCase();
+          var cls=String(nd.className||'');
+          if(tag==='UL'||tag==='OL'||/child-tree|sub-menu|tree-node|menu-item/.test(cls))continue;
+          out+=' '+String(dtxt(nd)||'');
+        }
+      }
+    }catch(e){}
+    var cleaned=String(out||'').replace(/\\s+/g,' ').trim();
+    return cleaned||String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
   }
   function pickable(){
     var out=[],docs=xxDocs();
-    var sels=['.next-menu-item','[role="option"]','[role="menuitem"]','[class*="menu-item"]','[class*="option"]','label'];
+    var sels=['.next-tree-node','.next-menu-item','[role="treeitem"]','[role="option"]','[role="menuitem"]','li[class*="menu-item"]','li[class*="option"]','label'];
     for(var d=0;d<docs.length;d++){
       for(var s=0;s<sels.length;s++){
         var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
         for(var i=0;i<ns.length;i++){
           var n=ns[i];
-          if(!dvis(n))continue;
+          if(!dvis(n)||isItemPart(n))continue;
           if(!boxOf(n))continue;
-          var t=norm(dtxt(n));
+          var t=norm(ownLabelText(n));
           if(!t||t.length>60)continue;
           if(out.indexOf(n)<0)out.push(n);
         }
       }
     }
-    return out.filter(function(n){return !out.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
+    return out.filter(function(n){
+      return !out.some(function(m){
+        if(m===n||!n.contains||!n.contains(m))return false;
+        var inSub=m.closest&&m.closest('.next-tree-child-tree,.next-menu-sub-menu,ul,ol');
+        if(inSub&&n.contains(inSub)&&inSub!==n)return false;
+        return true;
+      });
+    });
   }
   function checked(n){
     var b=boxOf(n);
@@ -2159,7 +2207,7 @@ function pickShopCategoryScript(names) {
     if(!key)continue;
     var hit=null;
     for(var i=0;i<boxes.length;i++){
-      var t=norm(dtxt(boxes[i]));
+      var t=norm(ownLabelText(boxes[i]));
       if(t===key){hit=boxes[i];break;}
       if(!hit&&t.indexOf(key)>=0&&t.length<=key.length+8)hit=boxes[i];
     }
@@ -2177,37 +2225,70 @@ function pickShopCategoryScript(names) {
     }catch(e){}
     picked.push(wants[w]);
   }
-  // 分组是折叠的（截图里「多金多金 / 财多财多」带箭头）：目标名字还在 missing 里，
-  // 就把分组点开，下一次 pick 才能看到子分类。最多展开 4 个，避免乱点。
+  // 分组/父分类是折叠的：目标名字还在 missing 里时，展开未展开的父分组或树开关（只展开未展开节点，避免来回折叠）。
   var expanded=0;
   if(missing.length){
-    var groups=[],docs=xxDocs();
-    var gsels=['.next-menu-item','[class*="menu-item"]','[class*="menu-group"]','[role="treeitem"]'];
+    var docs=xxDocs();
+    var switchers=[];
+    var swSels=['.next-tree-node-switcher','[class*="switcher"]','[class*="expand"]','[aria-expanded="false"]'];
+    for(var d1=0;d1<docs.length;d1++){
+      for(var ss=0;ss<swSels.length;ss++){
+        var sws;try{sws=docs[d1].querySelectorAll(swSels[ss]);}catch(e){continue;}
+        for(var si=0;si<sws.length;si++){
+          var sw=sws[si];
+          if(!dvis(sw))continue;
+          if(sw.getAttribute&&sw.getAttribute('data-xx-cat-expanded')==='1')continue;
+          if(sw.getAttribute&&sw.getAttribute('aria-expanded')==='true')continue;
+          if(/open|expanded/.test(String(sw.className||''))&&sw.getAttribute('aria-expanded')!=='false')continue;
+          if(switchers.indexOf(sw)<0)switchers.push(sw);
+        }
+      }
+    }
+    for(var k=0;k<switchers.length&&expanded<8;k++){
+      try{
+        if(switchers[k].setAttribute)switchers[k].setAttribute('data-xx-cat-expanded','1');
+        switchers[k].click();
+        expanded++;
+      }catch(e){}
+    }
+    var groups=[];
+    var gsels=['.next-menu-sub-menu > .next-menu-item','.next-menu-item','[class*="menu-item"]','[class*="menu-group"]','[role="treeitem"]'];
     for(var d2=0;d2<docs.length;d2++){
       for(var s2=0;s2<gsels.length;s2++){
         var ns2;try{ns2=docs[d2].querySelectorAll(gsels[s2]);}catch(e){continue;}
         for(var i2=0;i2<ns2.length;i2++){ if(dvis(ns2[i2])&&groups.indexOf(ns2[i2])<0)groups.push(ns2[i2]); }
       }
     }
-    for(var g=0;g<groups.length&&expanded<4;g++){
-      var gnode=groups[g];
-      if(boxOf(gnode))continue;               // 有复选框的是分类本身，不是分组
-      var gtext=norm(dtxt(gnode));
-      if(!gtext||gtext.length>30)continue;
-      var related=missing.some(function(m){var k=norm(m);return k.indexOf(gtext)===0&&k!==gtext;});
-      if(!related)continue;
-      try{ gnode.click(); expanded++; }catch(e){}
+    var passList=groups.filter(function(gn){
+      if(boxOf(gn))return false;
+      if(gn.getAttribute&&gn.getAttribute('data-xx-cat-expanded')==='1')return false;
+      var gt=norm(ownLabelText(gn));
+      return gt&&gt.length<=30;
+    });
+    // 优先展开名字前缀匹配 missing 的分组，其次再展开其余未展开分组（解决父类「多金多金」与子类「热销款」不同名的问题）
+    passList.sort(function(a,b){
+      var ta=norm(ownLabelText(a)),tb=norm(ownLabelText(b));
+      var ra=missing.some(function(m){var km=norm(m);return km.indexOf(ta)===0&&km!==ta;})?0:1;
+      var rb=missing.some(function(m){var km=norm(m);return km.indexOf(tb)===0&&km!==tb;})?0:1;
+      return ra-rb;
+    });
+    for(var g=0;g<passList.length&&expanded<8;g++){
+      try{
+        if(passList[g].setAttribute)passList[g].setAttribute('data-xx-cat-expanded','1');
+        passList[g].click();
+        expanded++;
+      }catch(e){}
     }
   }
   return JSON.stringify({ok:picked.length>0,found:boxes.length,picked:picked,missing:missing,expanded:expanded,
-    all:boxes.map(function(n){return String(dtxt(n)||'').replace(/\\s+/g,' ').trim().slice(0,40);}).filter(Boolean).slice(0,200),
-    sample:boxes.slice(0,12).map(function(n){return norm(dtxt(n)).slice(0,20);})});
+    all:boxes.map(function(n){return String(ownLabelText(n)||'').replace(/\\s+/g,' ').trim().slice(0,40);}).filter(Boolean).slice(0,200),
+    sample:boxes.slice(0,12).map(function(n){return norm(ownLabelText(n)).slice(0,20);})});
 })()`;
 }
 
 /**
  * 读取本店「店铺中分类」的全部选项（设置页「刷新」用）：
- * 打开下拉 → 读可见选项（分组标题 + 带复选框的分类名）→ 关下拉。
+ * 打开下拉 → 展开所有父分组/子分类 → 读可见选项（分组标题 + 一级/二级带复选框分类）→ 关下拉。
  * 页面没渲染出这个字段时返回 no-field，由调用方提示「请在店铺发布页确认」。
  */
 function readShopCategoryOptionsScript() {
@@ -2239,38 +2320,147 @@ function readShopCategoryOptionsScript() {
     trigger.click();
   }catch(e){}
   await wait(900);
+  function isItemPart(n){
+    var cls=String((n&&n.className)||'');
+    return /(?:^|[-_\s])(?:label|title|text|switcher|indent|icon|arrow|checkbox|content|wrapper)(?:$|[-_\s])/i.test(cls);
+  }
+  function ownLabel(n){
+    try{
+      var lbl=n.querySelector('.next-menu-item-text,.next-tree-node-label,[class*="node-title"],[class*="item-text"]');
+      if(lbl&&(!lbl.closest||!lbl.closest('.next-tree-node,.next-menu-item,[role="treeitem"],li')||lbl.closest('.next-tree-node,.next-menu-item,[role="treeitem"],li')===n)){
+        var lt=String(dtxt(lbl)||'').replace(/\\s+/g,' ').trim();
+        if(lt&&lt.length<=40)return lt;
+      }
+    }catch(e){}
+    var out='';
+    try{
+      var ch=n.childNodes||[];
+      for(var i=0;i<ch.length;i++){
+        var nd=ch[i];
+        if(nd.nodeType===3){out+=nd.nodeValue;}
+        else if(nd.nodeType===1){
+          var tag=String(nd.tagName||'').toUpperCase();
+          var cls=String(nd.className||'');
+          if(tag==='UL'||tag==='OL'||/child-tree|sub-menu|tree-node|menu-item/.test(cls))continue;
+          out+=' '+String(dtxt(nd)||'');
+        }
+      }
+    }catch(e){}
+    var cleaned=String(out||'').replace(/\\s+/g,' ').trim();
+    return cleaned||String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+  }
   function collectShopCatNodes(){
     var list=[],docs2=xxDocs();
-    var sels=['.next-menu-item','[role="option"]','[role="menuitem"]','[class*="menu-item"]','[class*="option"]'];
+    var sels=['.next-tree-node','.next-menu-item','[role="treeitem"]','[role="option"]','[role="menuitem"]','li[class*="menu-item"]','li[class*="option"]'];
     for(var d=0;d<docs2.length;d++){
       for(var s=0;s<sels.length;s++){
         var ns;try{ns=docs2[d].querySelectorAll(sels[s]);}catch(e){continue;}
         for(var i=0;i<ns.length;i++){
           var n=ns[i];
-          if(!dvis(n))continue;
-          var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
-          if(!t||t.length>40)continue;
+          if(!dvis(n)||isItemPart(n))continue;
+          var t=ownLabel(n);
+          if(!t||t.length>60)continue;
           if(list.indexOf(n)<0)list.push(n);
         }
       }
     }
-    return list.filter(function(n){return !list.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
+    return list.filter(function(n){
+      return !list.some(function(m){
+        if(m===n||!n.contains||!n.contains(m))return false;
+        var inSub=m.closest&&m.closest('.next-tree-child-tree,.next-menu-sub-menu,ul,ol');
+        if(inSub&&n.contains(inSub)&&inSub!==n)return false;
+        return true;
+      });
+    });
   }
-  function boxOf(n){var b=null;try{b=n.querySelector('input[type="checkbox"],.next-checkbox,[role="checkbox"]');}catch(e){}return b;}
+  function boxOf(n){
+    var b=null;
+    try{
+      var all=n.querySelectorAll('input[type="checkbox"],.next-checkbox,[role="checkbox"]');
+      for(var i=0;i<all.length;i++){
+        var c=all[i];
+        var owner=c.closest?c.closest('.next-tree-node,.next-menu-item,[role="treeitem"],[role="option"],[role="menuitem"],li'):null;
+        if(!owner||owner===n){b=c;break;}
+      }
+    }catch(e){}
+    return b;
+  }
+  function expandCollapsed(){
+    var count=0,docs2=xxDocs();
+    var swSels=['.next-tree-node-switcher','[class*="switcher"]','[class*="expand"]','[class*="arrow"]','[aria-expanded="false"]'];
+    for(var d=0;d<docs2.length;d++){
+      for(var ss=0;ss<swSels.length;ss++){
+        var sws;try{sws=docs2[d].querySelectorAll(swSels[ss]);}catch(e){continue;}
+        for(var si=0;si<sws.length;si++){
+          var sw=sws[si];
+          if(!dvis(sw))continue;
+          if(sw.closest&&sw.closest('.next-select,.next-select-trigger')===trigger)continue;
+          if(sw.getAttribute&&sw.getAttribute('data-xx-cat-expanded')==='1')continue;
+          if(sw.getAttribute&&sw.getAttribute('aria-expanded')==='true')continue;
+          if(/open|expanded/.test(String(sw.className||''))&&sw.getAttribute('aria-expanded')!=='false')continue;
+          try{
+            if(sw.setAttribute)sw.setAttribute('data-xx-cat-expanded','1');
+            sw.click();
+            count++;
+          }catch(e){}
+          if(count>=24)return count;
+        }
+      }
+    }
+    var curNodes=collectShopCatNodes();
+    for(var ex=0;ex<curNodes.length&&count<24;ex++){
+      var nd=curNodes[ex];
+      if(boxOf(nd))continue;
+      if(nd.getAttribute&&nd.getAttribute('data-xx-cat-expanded')==='1')continue;
+      try{
+        if(nd.setAttribute)nd.setAttribute('data-xx-cat-expanded','1');
+        nd.click();
+        count++;
+      }catch(e){}
+    }
+    return count;
+  }
+  for(var pass=0;pass<2;pass++){
+    var exp=expandCollapsed();
+    if(!exp)break;
+    await wait(450);
+  }
   var nodes=collectShopCatNodes();
-  // 折叠分组（没有复选框的父标题）：点开一次再重读子分类
-  var expanded=0;
-  for(var ex=0;ex<nodes.length&&expanded<6;ex++){
-    if(boxOf(nodes[ex]))continue;
-    try{nodes[ex].click();expanded++;}catch(e){}
+  function findAncestorGroup(n){
+    var sub=n.closest&&n.closest('.next-menu-sub-menu,.next-tree-child-tree,[class*="sub-menu"],[class*="child-tree"]');
+    if(sub&&sub.parentElement){
+      var parentNode=sub.parentElement.closest('.next-tree-node,.next-menu-sub-menu,[role="treeitem"],li')||sub.parentElement;
+      if(parentNode&&parentNode!==n){
+        var ht=ownLabel(parentNode);
+        if(ht&&ht.length<=40&&ht!==ownLabel(n))return ht;
+      }
+    }
+    return '';
   }
-  if(expanded){await wait(450);nodes=collectShopCatNodes();}
-  var items=[],group='';
+  var items=[],flatGroup='',level1Group='',seen={};
   for(var k=0;k<nodes.length;k++){
-    var n=nodes[k],t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+    var n=nodes[k],t=ownLabel(n);
+    if(!t||t.length>40)continue;
     var hasBox=Boolean(boxOf(n));
-    if(!hasBox){group=t;continue;}
-    items.push({name:t,group:group,path:group?group+' / '+t:t});
+    if(!hasBox){flatGroup=t;continue;}
+    var anc=findAncestorGroup(n);
+    var lvlAttr=n.getAttribute&&n.getAttribute('aria-level');
+    var lvl=lvlAttr?Number(lvlAttr):0;
+    var g='';
+    if(anc){
+      g=anc;
+    }else if(lvl>=2){
+      g=level1Group||flatGroup;
+    }else if(lvl===1){
+      level1Group=t;
+      g='';
+    }else{
+      g=flatGroup;
+    }
+    var key=g+'|'+t;
+    if(seen[key])continue;
+    seen[key]=1;
+    items.push({name:t,group:g,path:g?g+' / '+t:t});
   }
   // 关下拉：Escape + 点空白，避免遮住后面的字段
   try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
@@ -2874,7 +3064,11 @@ function buildEnsureProvinceScript(candidates) {
         }
       }
     }
-    return out;
+    var provOverlays=out.filter(function(ov){
+      var txt=norm(dtxt(ov));
+      return /其他|其它|北京|上海|广东|福建|浙江/.test(txt);
+    });
+    return provOverlays.length?provOverlays:out;
   }
   function collectOpts(overlays){
     var out=[],seen=[];
@@ -2907,6 +3101,7 @@ function buildEnsureProvinceScript(candidates) {
   var triggerPoint=pt(fireEl)||pt(trig);
   var overlays=findOverlays(true);
   if(!overlays.length||!collectOpts(overlays).length){
+    try{if(fireEl.scrollIntoView)fireEl.scrollIntoView({block:'center'});}catch(e){}
     try{
       var ev={bubbles:true,cancelable:true,view:window};
       fireEl.dispatchEvent(new PointerEvent('pointerdown',ev));
@@ -2915,7 +3110,7 @@ function buildEnsureProvinceScript(candidates) {
       fireEl.dispatchEvent(new MouseEvent('mouseup',ev));
       fireEl.click();
     }catch(e){}
-    await wait(400);
+    await wait(450);
     overlays=findOverlays(true);
     if(!overlays.length&&fireEl!==trig){
       try{trig.click();}catch(e){}
@@ -2934,6 +3129,7 @@ function buildEnsureProvinceScript(candidates) {
       if(cand&&vis(cand))searchInp=cand;
     }catch(e){}
   }
+  var searchPoint=pt(searchInp);
   var hit=wantList.length?matchOpts(opts,wantList):null;
   if(!hit&&wantList.length&&searchInp){
     var qText=coreProv(wantList[0])||wantList[0];
@@ -2963,21 +3159,27 @@ function buildEnsureProvinceScript(candidates) {
   }
   if(!hit){
     try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
-    return JSON.stringify({ok:false,reason:'no-other-option',point:triggerPoint,available:opts.slice(0,10).map(function(o){return o.text;})});
+    return JSON.stringify({ok:false,reason:'no-other-option',point:triggerPoint,searchPoint:searchPoint,available:opts.slice(0,10).map(function(o){return o.text;})});
   }
   try{if(hit.el.scrollIntoView)hit.el.scrollIntoView({block:'nearest'});}catch(e){}
   var optPoint=pt(hit.el);
   try{
     var oev={bubbles:true,cancelable:true,view:window};
+    var clickInner=(hit.el.querySelector&&hit.el.querySelector('.next-menu-item-inner,span,a'))||hit.el;
+    hit.el.dispatchEvent(new PointerEvent('pointerdown',oev));
     hit.el.dispatchEvent(new MouseEvent('mousedown',oev));
+    hit.el.dispatchEvent(new PointerEvent('pointerup',oev));
     hit.el.dispatchEvent(new MouseEvent('mouseup',oev));
     hit.el.click();
+    if(clickInner&&clickInner!==hit.el)clickInner.click();
   }catch(e){}
   await wait(350);
   var after=readVal();
-  // 如果下拉没自动关，发 Escape 收起（注意别把「其他」当成未选）
-  try{if(findOverlays(true).length)document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
   var ok=!isPlaceholder(after);
+  // 只有选成功且弹窗未自动关闭时才 Escape；选不中时保持下拉打开，方便紧接着用 CDP 真实鼠标点击 optionPoint / searchPoint。
+  if(ok){
+    try{if(findOverlays(true).length)document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
+  }
   return JSON.stringify({
     ok:ok,
     picked:ok?after:'',
@@ -2986,6 +3188,7 @@ function buildEnsureProvinceScript(candidates) {
     hadCandidates:wantList.length>0,
     point:triggerPoint,
     optionPoint:optPoint,
+    searchPoint:searchPoint,
     reason:ok?'':'readback-empty'
   });
 })()`;
@@ -6067,9 +6270,19 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       if (!s || /^(?:请选择|无|空|中国大陆|中国)$/.test(s) || out.includes(s)) return;
       out.push(s);
     };
+    if (detail?.snapshot?.province) {
+      add(detail.snapshot.province);
+      const m = String(detail.snapshot.province).match(PROVINCE_RE);
+      if (m && m[0]) add(m[0]);
+    }
+    if (detail?.shipping?.province) {
+      add(detail.shipping.province);
+      const m = String(detail.shipping.province).match(PROVINCE_RE);
+      if (m && m[0]) add(m[0]);
+    }
     for (const a of pool) {
       const n = String(a?.name || '').replace(/[:：*\s]/g, '');
-      if (/^(?:省份|产地省份|所在省份)$/.test(n)) {
+      if (/^(?:省份|产地省份|所在省份|所在省|省|生产省份|产区)$/.test(n)) {
         add(a?.value);
         const m = String(a?.value || '').match(PROVINCE_RE);
         if (m && m[0]) add(m[0]);
@@ -6087,19 +6300,45 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
 
   /**
    * 省份下拉（* 省份）：优先选匹配省份；获取不到省份或下拉里没有该省份时，选择下拉框里的「其他」。
-   * DOM 点击打不开/选不中时，退到 CDP 真实鼠标点坐标再重试一次。
+   * DOM 点击打不开/选不中时，退到 CDP 真实鼠标点坐标，再退到搜索框键入「其他」/目标并回车。
    */
   async function ensureProvince(win, candidates = []) {
     let res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
     if (res && !res.ok && !res.skipped) {
       if (res.reason === 'no-overlay' && res.point && Number.isFinite(Number(res.point.x))) {
         await cdpXY(win, Number(res.point.x), Number(res.point.y));
-        await sleep(450);
+        await sleep(500);
         res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
-      } else if (res.reason === 'readback-empty' && res.optionPoint && Number.isFinite(Number(res.optionPoint.x))) {
+      }
+      if (res && !res.ok && res.reason === 'readback-empty' && res.optionPoint && Number.isFinite(Number(res.optionPoint.x))) {
         await cdpXY(win, Number(res.optionPoint.x), Number(res.optionPoint.y));
-        await sleep(350);
+        await sleep(400);
         res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 10000));
+      }
+      if (res && !res.ok && res.searchPoint && Number.isFinite(Number(res.searchPoint.x))) {
+        const searchText = String(res.target || '其他').trim() || '其他';
+        try {
+          await cdpXY(win, Number(res.searchPoint.x), Number(res.searchPoint.y));
+          await sleep(150);
+          const dbg = win.webContents.debugger;
+          try { dbg.attach('1.3'); } catch { /* 已附着 */ }
+          await dbg.sendCommand('Input.insertText', { text: searchText });
+          await sleep(350);
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+          await sleep(400);
+          res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 10000));
+        } catch { /* ignore */ }
+      }
+      if (res && !res.ok) {
+        try {
+          const dbg = win.webContents.debugger;
+          try { dbg.attach('1.3'); } catch { /* */ }
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        } catch { /* */ }
       }
     }
     return res || { ok: false, reason: 'eval-failed' };

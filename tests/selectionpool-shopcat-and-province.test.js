@@ -603,3 +603,161 @@ test('readShopCategoryOptionsScript expands collapsed parent group and collects 
   );
 });
 
+test('shopCategorySiteScript clicks expand-all and extracts nested sub-table subcategories under parent group', async () => {
+  const { h, win } = makeMiniDom();
+  let expandedAll = false;
+  const tbody = h('tbody', {});
+  const renderRows = () => {
+    tbody.children = [];
+    tbody.childNodes = [];
+    tbody.appendChild(
+      h('tr', { class: 'next-table-row' }, [
+        h('td', {}, [], '多金多金'),
+        h('td', {}, [], '2026-06-01'),
+      ]),
+    );
+    if (expandedAll) {
+      tbody.appendChild(
+        h('tr', { class: 'next-table-expanded-row' }, [
+          h('td', { colspan: '2' }, [
+            h('table', {}, [
+              h('tbody', {}, [
+                h('tr', {}, [h('td', {}, [], '热销款A'), h('td', {}, [], '2026-06-02')]),
+                h('tr', {}, [h('td', {}, [], '热销款B'), h('td', {}, [], '2026-06-03')]),
+              ]),
+            ]),
+          ]),
+        ]),
+      );
+    }
+  };
+  renderRows();
+  const expandBtn = h('button', {}, [], '全部展开');
+  expandBtn.addEventListener('click', () => {
+    expandedAll = true;
+    renderRows();
+  });
+  win.document.body.appendChild(expandBtn);
+  win.document.body.appendChild(
+    h('table', { id: 'J_CatTable' }, [
+      h('thead', {}, [h('tr', {}, [h('th', {}, [], '分类名称'), h('th', {}, [], '创建时间')])]),
+      tbody,
+    ]),
+  );
+
+  const parsed = JSON.parse(await vm.runInNewContext(shopCategorySiteScript(), win));
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(
+    parsed.items.map(x => ({ name: x.name, group: x.group })),
+    [
+      { name: '多金多金', group: '' },
+      { name: '热销款A', group: '多金多金' },
+      { name: '热销款B', group: '多金多金' },
+    ],
+  );
+});
+
+test('pickShopCategoryScript expands parent node without prefix match and readShopCategoryOptionsScript keeps checkboxed parent nodes', async () => {
+  const { h, win } = makeMiniDom({ href: 'https://sell.publish.tmall.com/tmall/publish.htm' });
+  const trigger = h('div', { class: 'next-select' }, [h('span', { class: 'next-select-value' }, [], '选择分类')]);
+  win.document.body.appendChild(
+    h('div', { class: 'sell-component-info-wrapper-wrap' }, [
+      h('label', {}, [], '店铺中分类'),
+      trigger,
+    ]),
+  );
+  let subVisible = false;
+  const switcher = h('span', { class: 'next-tree-node-switcher', 'aria-expanded': 'false' }, []);
+  const parentBox = h('input', { type: 'checkbox' });
+  const childBox = h('input', { type: 'checkbox' });
+  const childNode = h('li', { class: 'next-tree-node', 'aria-level': '2', visible: false }, [
+    childBox,
+    h('span', { class: 'next-tree-node-label' }, [], '热销款'),
+  ]);
+  switcher.addEventListener('click', () => {
+    subVisible = true;
+    switcher.setAttribute('aria-expanded', 'true');
+    childNode.visible = true;
+  });
+  const treePopup = h('div', { class: 'next-overlay-wrapper opened' }, [
+    h('ul', { class: 'next-tree' }, [
+      h('li', { class: 'next-tree-node', 'aria-level': '1' }, [
+        switcher,
+        parentBox,
+        h('span', { class: 'next-tree-node-label' }, [], '多金多金'),
+        h('ul', { class: 'next-tree-child-tree' }, [childNode]),
+      ]),
+    ]),
+  ]);
+  win.document.body.appendChild(treePopup);
+
+  // readShopCategoryOptionsScript should preserve parent '多金多金' AND expand + record child '热销款' under '多金多金'
+  const readRes = JSON.parse(await vm.runInNewContext(driverV2.readShopCategoryOptionsScript(), win));
+  assert.equal(readRes.ok, true);
+  assert.equal(subVisible, true);
+  assert.deepEqual(
+    readRes.items.map(x => ({ name: x.name, group: x.group })),
+    [
+      { name: '多金多金', group: '' },
+      { name: '热销款', group: '多金多金' },
+    ],
+  );
+
+  // Reset collapse state and verify pickShopCategoryScript expands switcher to reveal non-prefixed child '热销款'
+  subVisible = false;
+  childNode.visible = false;
+  switcher.setAttribute('aria-expanded', 'false');
+  switcher.attrs['data-xx-cat-expanded'] = '';
+
+  const pickPass1 = JSON.parse(await vm.runInNewContext(driverV2.__scripts.pickShopCategoryScript(['热销款']), win));
+  assert.equal(pickPass1.ok, false);
+  assert.ok(pickPass1.expanded >= 1);
+  assert.equal(subVisible, true);
+
+  const pickPass2 = JSON.parse(await vm.runInNewContext(driverV2.__scripts.pickShopCategoryScript(['热销款']), win));
+  assert.equal(pickPass2.ok, true);
+  assert.deepEqual(pickPass2.picked, ['热销款']);
+});
+
+test('buildEnsureProvinceScript leaves overlay open with optionPoint and searchPoint when readback remains placeholder', async () => {
+  const { h, win } = makeMiniDom({ href: 'https://sell.publish.tmall.com/tmall/publish.htm' });
+  const valSpan = h('span', { class: 'next-select-value' }, [], '请选择');
+  const trigger = h('span', { class: 'next-select-trigger' }, [
+    h('span', { class: 'next-select-values' }, [valSpan]),
+  ]);
+  win.document.body.appendChild(
+    h('div', { class: 'sell-component-info-wrapper-wrap' }, [
+      h('div', { class: 'sell-component-info-wrapper-label-container' }, [
+        h('label', { class: 'sell-component-info-wrapper-label' }, [], '* 省份'),
+      ]),
+      h('div', { class: 'sell-component-info-wrapper-component-wrap' }, [
+        h('div', { class: 'next-select' }, [trigger]),
+      ]),
+    ]),
+  );
+
+  const searchInput = h('input', { type: 'text', value: '', rect: { left: 220, top: 80, width: 140, height: 26 } });
+  const otherLi = h('li', { class: 'next-menu-item', role: 'option', rect: { left: 220, top: 120, width: 140, height: 28 } }, [], '其他');
+  // Intentionally do NOT update valSpan on synthetic DOM click to simulate React/Fusion ignoring synthetic click
+  const popup = h('div', { class: 'next-overlay-wrapper opened' }, [
+    h('div', { class: 'next-overlay-inner' }, [
+      h('ul', { class: 'next-menu', role: 'listbox' }, [
+        h('li', { class: 'search-box' }, [searchInput]),
+        otherLi,
+      ]),
+    ]),
+  ]);
+  win.document.body.appendChild(popup);
+
+  const res = JSON.parse(await vm.runInNewContext(driverV2.__scripts.buildEnsureProvinceScript([]), win));
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'readback-empty');
+  assert.equal(res.picked, '');
+  assert.equal(res.target, '其他');
+  assert.equal(res.usedFallback, true);
+  assert.equal(popup.visible, true);
+  assert.deepEqual(res.optionPoint, { x: 290, y: 134 });
+  assert.deepEqual(res.searchPoint, { x: 290, y: 93 });
+});
+
+

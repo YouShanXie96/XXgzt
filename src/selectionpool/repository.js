@@ -76,18 +76,25 @@ function createSelectionPoolRepository(ctx) {
         return { itemId: C.int(existing.id), action: 'unchanged', version: C.int(existing.version) || 1, rawSaved: true, replayed: true };
       }
     }
-    const productId = C.trimmed(payload.product_id || payload.productId);
+    const snapshot = payload.snapshot && typeof payload.snapshot === 'object' ? payload.snapshot : {};
+    const productUrl = C.str(payload.product_url || payload.productUrl);
+    const sku = C.trimmed(payload.sku || payload.sku_id || payload.skuId || snapshot.sku || snapshot.sku_id || snapshot.skuId);
+    const urlIdMatch = productUrl.match(/[?&](?:id|item_id|num_iid)=(\d{4,20})/i);
+    const rawProductId = C.trimmed(
+      payload.product_id || payload.productId || snapshot.product_id || snapshot.item_id || (urlIdMatch ? urlIdMatch[1] : '')
+    );
+    const productId = rawProductId || sku || productUrl;
     const platform = C.str(payload.platform) || 'taobao';
     if (!productId) throw new Error('缺少商品 ID，采集包不完整');
 
     const now = new Date().toISOString();
-    const snapshot = payload.snapshot && typeof payload.snapshot === 'object' ? payload.snapshot : {};
     const base = {
       product_id: productId,
+      sku,
       platform,
       title: C.str(payload.title).slice(0, 500),
       image_url: C.str(payload.image_url || payload.imageUrl),
-      product_url: C.str(payload.product_url || payload.productUrl),
+      product_url: productUrl,
       shop_name: C.str(payload.shop_name || payload.shopName),
       price_fen: C.numOrNull(payload.price_fen ?? payload.priceFen),
       price_label: C.str(payload.price_label || payload.priceLabel),
@@ -137,7 +144,7 @@ function createSelectionPoolRepository(ctx) {
 
     const keyword = C.trimmed(query.keyword).toLowerCase();
     if (keyword) {
-      rows = rows.filter(r => [r.title, r.productId, r.shopName, r.note, r.groupName, ...r.tags]
+      rows = rows.filter(r => [r.title, r.productId, r.sku, r.productUrl, r.shopName, r.note, r.groupName, ...r.tags]
         .some(v => C.str(v).toLowerCase().includes(keyword)));
     }
     if (query.group && query.group !== 'all') rows = rows.filter(r => r.groupName === C.str(query.group));

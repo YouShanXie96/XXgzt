@@ -1,37 +1,61 @@
 {
   "running": true,
-  "runId": "run-demo-verify",
-  "done": 0,
-  "total": 4,
-  "ok": 0,
-  "fail": 0,
-  "startedAt": "2026-11-21T07:48:21.666Z",
-  "title": "正在填写：选品#3 类目与属性",
+  "runId": "run-verify-1",
+  "done": 2,
+  "total": 5,
+  "ok": 1,
+  "fail": 1,
+  "startedAt": "2026-11-24T06:31:58.791Z",
+  "title": "正在填充基础属性与省份参数…",
   "stopRequested": false,
   "lines": [
-    "[1/4] 选品#3 → 测试旗舰店 拉取详情…",
-    "[1/4] 上架价格：同行价 ¥19.90 → ¥18.90",
-    "[1/4] 正在填充发布页类目：粮油米面 / 调味酱 / 辣椒酱"
+    "[1/5] 选品#1 → 腾味菜旗舰 已放入仓库 #9001001",
+    "[2/5] 选品#2 → 腾味菜旗舰 失败：缺少必填属性",
+    "[3/5] 选品#3 → 腾味菜旗舰 拉取详情…"
   ],
   "items": [
     {
-      "queueId": "q-verify-1",
+      "queueId": "q-1-1",
+      "itemId": 1,
+      "title": "天然海盐调味料 重复提交第1次",
+      "shopId": "s1",
+      "shopName": "腾味菜旗舰",
+      "status": "done",
+      "code": "",
+      "message": "已放入仓库 #9001001",
+      "startedAt": "2026-11-24T06:31:58.791Z",
+      "finishedAt": "2026-11-24T06:31:58.791Z"
+    },
+    {
+      "queueId": "q-2-2",
+      "itemId": 2,
+      "title": "天然海盐调味料 重复提交第2次",
+      "shopId": "s1",
+      "shopName": "腾味菜旗舰",
+      "status": "failed",
+      "code": "MISSING_PARAM",
+      "message": "缺少必填属性",
+      "startedAt": "2026-11-24T06:31:58.791Z",
+      "finishedAt": "2026-11-24T06:31:58.791Z"
+    },
+    {
+      "queueId": "q-3-3",
       "itemId": 3,
-      "title": "四川红油辣椒酱（第一次采集）",
-      "shopId": "s-demo",
-      "shopName": "测试旗舰店",
+      "title": "手工鸡腿面包怀旧零食",
+      "shopId": "s1",
+      "shopName": "腾味菜旗舰",
       "status": "running",
       "code": "",
       "message": "",
-      "startedAt": "2026-11-21T07:48:51.666Z",
+      "startedAt": "2026-11-24T06:31:58.791Z",
       "finishedAt": ""
     },
     {
-      "queueId": "q-verify-2",
-      "itemId": 2,
-      "title": "四川红油辣椒酱（第二次重复提交）",
-      "shopId": "s-demo",
-      "shopName": "测试旗舰店",
+      "queueId": "q-4-4",
+      "itemId": 4,
+      "title": "新疆风味奶疙瘩原味独立装",
+      "shopId": "s1",
+      "shopName": "腾味菜旗舰",
       "status": "queued",
       "code": "",
       "message": "",
@@ -39,23 +63,11 @@
       "finishedAt": ""
     },
     {
-      "queueId": "q-verify-3",
+      "queueId": "q-1-5",
       "itemId": 1,
-      "title": "农家手工豆瓣酱 500g",
-      "shopId": "s-demo",
-      "shopName": "测试旗舰店",
-      "status": "queued",
-      "code": "",
-      "message": "",
-      "startedAt": "",
-      "finishedAt": ""
-    },
-    {
-      "queueId": "q-verify-4",
-      "itemId": 3,
-      "title": "四川红油辣椒酱（追加到队列）",
-      "shopId": "s-demo2",
-      "shopName": "二号专营店",
+      "title": "天然海盐调味料（追加排队测试）",
+      "shopId": "s1",
+      "shopName": "腾味菜旗舰",
       "status": "queued",
       "code": "",
       "message": "",
@@ -63,5 +75,5 @@
       "finishedAt": ""
     }
   ],
-  "updatedAt": "2026-11-21T07:49:06.669Z"
+  "updatedAt": "2026-11-24T06:31:58.797Z"
 }

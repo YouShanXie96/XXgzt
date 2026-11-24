@@ -226,3 +226,49 @@ test('autoShelf supports appending new items into active queue without clobberin
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test('duplicate submissions identified only by sku or product_url also append new records and expose sku', async () => {
+  const ctx = makeMemCtx();
+  const repo = createSelectionPoolRepository(ctx);
+
+  const firstBySku = await repo.ingest({
+    sku: 'SKU-ONLY-001',
+    platform: 'taobao',
+    title: '纯SKU商品第一版',
+    price_fen: 1990,
+  });
+  assert.equal(firstBySku.action, 'created');
+
+  const secondBySku = await repo.ingest({
+    sku: 'SKU-ONLY-001',
+    platform: 'taobao',
+    title: '纯SKU商品第二版',
+    price_fen: 2990,
+  });
+  assert.equal(secondBySku.action, 'created');
+  assert.notEqual(secondBySku.itemId, firstBySku.itemId);
+
+  const firstByUrl = await repo.ingest({
+    product_url: 'https://item.taobao.com/item.htm?id=55667788',
+    platform: 'tmall',
+    title: '纯链接商品第一版',
+  });
+  assert.equal(firstByUrl.action, 'created');
+
+  const secondByUrl = await repo.ingest({
+    product_url: 'https://item.taobao.com/item.htm?id=55667788',
+    platform: 'tmall',
+    title: '纯链接商品第二版',
+  });
+  assert.equal(secondByUrl.action, 'created');
+  assert.notEqual(secondByUrl.itemId, firstByUrl.itemId);
+
+  const listed = await repo.list({ keyword: 'SKU-ONLY-001' });
+  assert.equal(listed.total, 2);
+  assert.equal(listed.items[0].sku, 'SKU-ONLY-001');
+  assert.deepEqual(
+    listed.items.map(x => x.title).sort(),
+    ['纯SKU商品第一版', '纯SKU商品第二版'],
+  );
+});
+

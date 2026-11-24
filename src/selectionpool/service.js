@@ -196,9 +196,11 @@ function createSelectionPoolService(ctx, options = {}) {
         const category = categoryService.normalizeCaptureCategory(capture, snapshot);
         const categoryPath = category.categoryPath;
         const categoryId = category.categoryId;
+        const sku = C.trimmed(capture.sku || capture.skuId || capture.sku_id || snapshot.sku || snapshot.skuId || snapshot.sku_id);
         const result = await repo.ingest({
           request_id: C.trimmed(envelope.request_id || envelope.requestId || capture.request_id),
-          product_id: C.trimmed(capture.productId || capture.product_id || snapshot.product_id),
+          product_id: C.trimmed(capture.productId || capture.product_id || capture.itemId || capture.item_id || snapshot.product_id || snapshot.item_id),
+          sku,
           platform: C.str(capture.platform || snapshot.platform) || 'taobao',
           title: C.str(capture.title || snapshot.title),
           image_url: C.str(capture.imageUrl || capture.image_url || images[0]),
@@ -213,6 +215,7 @@ function createSelectionPoolService(ctx, options = {}) {
           team_name: C.str(capture.teamName || capture.team_name),
           snapshot: {
             ...snapshot,
+            ...(sku ? { sku } : {}),
             images,
             attributes,
             // 归一化失败时不要用空值覆盖插件已经采到的中文路径 / 类目 ID（用户 2026-11-11）。
@@ -223,19 +226,15 @@ function createSelectionPoolService(ctx, options = {}) {
             description: { text: C.str(description.text), images: C.strList(description.images) },
           },
         });
-        // 重新采集后把新的页面参数同步到编辑器草稿，避免旧草稿把参数盖成空。
-        try {
-          if (result.action === 'updated') await editorStore.syncBaseline(result.itemId, await repo.detail(result.itemId));
-        } catch { /* 草稿同步失败不影响入库 */ }
-        // 一次性通知，不写进顶部常驻进度条；渲染层负责短暂提示并刷新列表。
+        // 一次性通知，不写进顶部常驻进度条；列表直接新增并刷新。
         notice('ingest', '已接收插件采集', { itemId: result.itemId, refresh: true, paramCount: attributes.length, categoryId, categoryPath });
-        // 回执与老 SaaS parsePushReceipt 同形；item_id/version 必须是整数。
+        // 回执与老 SaaS parsePushReceipt 同形；item_id/version 必须是整数，重复提交固定新增而非覆盖。
         return send(200, {
           raw_saved: result.rawSaved, item_id: C.int(result.itemId), action: result.action,
           category_id: categoryId, category_path: categoryPath,
           version: C.int(result.version), collected_at: result.collectedAt,
           request_id: C.trimmed(envelope.request_id || envelope.requestId), replayed: result.replayed,
-          readded: result.action === 'updated',
+          readded: false,
         });
       } catch (error) {
         return send(400, { ok: false, error: { code: 'BAD_REQUEST', message: C.str(error?.message || error).slice(0, 300) } });

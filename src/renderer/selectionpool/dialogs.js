@@ -55,6 +55,8 @@
     }
     function restoreLogScroll() {
       if (ui.name !== 'queueProgress' && ui.name !== 'autoShelf') return;
+      const allBox = document.querySelector('[data-queue-select-all]');
+      if (allBox) allBox.indeterminate = allBox.dataset.indeterminate === '1';
       const el = document.querySelector('[data-spx-log]');
       if (!el) { logNode = null; return; }
       bindLogNode(el);
@@ -85,7 +87,7 @@
     const detailCache = new Map();
 
     const ui = {
-      name: '', busy: false, message: '',
+      name: '', busy: false, message: '', messageTone: 'info',
       shelf: { itemIds: [], shops: new Set(), config: null, queue: null, pickKeyword: '', shopCats: {}, shopCatState: {}, shopcatOpen: '', templates: { sku: [], detail: [] }, showTips: false },
       progress: { queue: null, logs: [], resume: null, logAll: false, autoFollow: false, selectedQueueIds: new Set() },
       pub: { tab: 'failures', keyword: '', page: 1, size: 6, data: null, expanded: '', resume: null, shelfRecords: [], itemId: 0 },
@@ -126,7 +128,11 @@
       if (seconds < 60) return `${seconds} 秒`;
       return `${Math.floor(seconds / 60)} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
     };
-    const notice = text => { ui.message = text; render(); };
+    const setDialogMessage = (text, isError = false) => {
+      ui.message = String(text || '');
+      ui.messageTone = isError ? 'error' : 'info';
+      render();
+    };
 
     // ---------------------------------------------------------------- 数据加载
     async function refreshShelf() {
@@ -297,6 +303,7 @@
     function open(name, payload = {}) {
       ui.name = name;
       ui.message = '';
+      ui.messageTone = 'info';
       if (name === 'autoShelf') {
         if (Array.isArray(payload.itemIds)) {
           // 保留未提交项并合并从表格新勾选的 itemIds（不重复）
@@ -338,7 +345,7 @@
       render();
     }
 
-    const close = () => { ui.name = ''; ui.message = ''; render(); };
+    const close = () => { ui.name = ''; ui.message = ''; ui.messageTone = 'info'; render(); };
     const isOpen = () => Boolean(ui.name);
 
     // ---------------------------------------------------------------- 各弹窗 HTML
@@ -387,50 +394,141 @@
       return { items, total, done, ok, fail, queuedCount, percent, current, running };
     }
 
-    function queueSideRow(row, index) {
+    function queueTableRow(row, index) {
       const info = QUEUE_STATE[row.status] || QUEUE_STATE.queued;
       const title = queueTitle(row);
       const removable = isQueueRemovable(row);
       const checked = removable && ui.progress.selectedQueueIds.has(row.queueId);
-      const shopTag = row.shopName ? `[${row.shopName}] ` : '';
-      const detail = info.tone === 'running' ? `${shopTag}已用时 ${elapsed(row.startedAt)}`
-        : info.tone === 'failed' ? `${shopTag}${row.message || row.code || '失败'}`
-        : info.tone === 'done' ? `${shopTag}${row.message || '已放入仓库'}`
-        : `${shopTag}等待上架`;
+      const shopTag = row.shopName || '—';
+      const detail = info.tone === 'running' ? `已用时 ${elapsed(row.startedAt)}`
+        : info.tone === 'failed' ? (row.message || row.code || '失败')
+        : info.tone === 'done' ? (row.message || '已放入仓库')
+        : '等待上架';
       const qid = esc(row.queueId || `row-${index}`);
-      return `<div class="spx-side-row is-${info.tone}${checked ? ' is-checked' : ''}" title="选品#${esc(row.itemId)} ${esc(title)} · ${esc(detail)}">
-        <input type="checkbox" class="spx-side-check" ${removable ? `data-queue-select="${qid}" ${checked ? 'checked' : ''}` : 'disabled'} aria-label="选择排队商品 #${esc(row.itemId)}" title="${removable ? '勾选后可移除排队' : (row.status === 'running' ? '正在上架中，不可移除' : '已执行结束')}">
-        <span class="spx-side-index">${index + 1}</span>
-        <span class="spx-side-name"><b>#${esc(row.itemId)} · ${esc(short(title, 18))}</b><span>${esc(short(detail, 26))}</span></span>
-        <span class="spx-side-state">${esc(info.label)}</span>
-      </div>`;
+      return `<tr class="spx-queue-tr is-${info.tone}${checked ? ' is-checked' : ''}" title="选品#${esc(row.itemId)} ${esc(title)} · ${esc(detail)}">
+        <td class="select-col">
+          <input type="checkbox" class="table-select" ${removable ? `data-queue-select="${qid}" ${checked ? 'checked' : ''}` : 'disabled'} aria-label="选择排队商品 #${esc(row.itemId)}" title="${removable ? '勾选后可移除排队' : (row.status === 'running' ? '正在上架中，不可移除' : '已执行结束')}">
+        </td>
+        <td class="mono spx-q-idx">${index + 1}</td>
+        <td class="spx-q-title"><span class="cell-main clip">#${esc(row.itemId)} · ${esc(short(title, 24))}</span></td>
+        <td class="spx-q-shop"><span class="clip">${esc(short(shopTag, 12))}</span></td>
+        <td class="spx-q-state"><span class="spx-q-pill is-${info.tone}">${esc(info.label)}</span></td>
+        <td class="spx-q-detail"><span class="clip">${esc(short(detail, 26))}</span></td>
+      </tr>`;
     }
 
-    function shelfProgressSide(q) {
+    function shelfQueuePanel(q) {
       const s = queueSideStats(q);
       const removableRows = s.items.filter(isQueueRemovable);
       const selectedRemovable = removableRows.filter(r => ui.progress.selectedQueueIds.has(r.queueId));
       const allChecked = removableRows.length > 0 && selectedRemovable.length === removableRows.length;
-      return `<aside class="spx-shelf-side" data-spx-side>
+      const someChecked = selectedRemovable.length > 0 && selectedRemovable.length < removableRows.length;
+      return `<section class="spx-queue-panel" data-spx-side data-spx-queue-panel>
         <div class="spx-side-head">
-          <div><b>右侧排队序列</b><span data-spx-side-current>排队中 ${s.queuedCount} · 合计 ${s.items.length}</span></div>
+          <div>
+            <b>右侧排队列表</b>
+            <span data-spx-side-current>排队中 ${s.queuedCount} · 合计 ${s.items.length}</span>
+          </div>
           <em data-spx-side-percent>${s.percent}%</em>
         </div>
-        <div class="spx-queue-toolbar" data-spx-queue-toolbar>
-          <label class="spx-queue-checkall" title="全选 / 取消全选所有排队中商品">
-            <input type="checkbox" data-queue-select-all="1" ${allChecked ? 'checked' : ''} ${removableRows.length ? '' : 'disabled'}>
-            <span>全选排队${removableRows.length ? ` (${removableRows.length})` : ''}</span>
-          </label>
-          <span class="spx-queue-selcount" data-spx-queue-selcount>${selectedRemovable.length ? `已选 <b>${selectedRemovable.length}</b>` : ''}</span>
-          <button type="button" class="button small danger spx-queue-remove-btn" data-action="selectionpool:dlg-queue-remove" ${selectedRemovable.length ? '' : 'disabled'}>移除排队${selectedRemovable.length ? ` (${selectedRemovable.length})` : ''}</button>
+
+        <div class="compliance-batch-bar spx-queue-batch-bar" data-spx-queue-toolbar>
+          <button type="button" class="button small" data-action="selectionpool:dlg-queue-select-all" ${removableRows.length ? '' : 'disabled'}>全选</button>
+          <button type="button" class="button small" data-action="selectionpool:dlg-queue-invert" ${removableRows.length ? '' : 'disabled'}>反选</button>
+          <span class="spx-queue-selcount" data-spx-queue-selcount>${selectedRemovable.length ? `已选 <b>${selectedRemovable.length}</b> / 可移除 ${removableRows.length}` : (removableRows.length ? `可移除 <b>${removableRows.length}</b> 项` : '暂无可移除项')}</span>
+          <span class="spacer"></span>
+          <button type="button" class="button small danger spx-queue-remove-btn" data-action="selectionpool:dlg-queue-remove" ${selectedRemovable.length ? '' : 'disabled'}>批量移除选定排队项${selectedRemovable.length ? ` (${selectedRemovable.length})` : ''}</button>
         </div>
-        <div class="spx-side-list" data-spx-side-list>${s.items.length ? s.items.map((r, i) => queueSideRow(r, i)).join('') : '<div class="spx-side-empty">当前没有排队的商品。可点击右上角「+ 新增排队 / 上架设置」选择选品并确认上架。</div>'}</div>
-      </aside>`;
+
+        <div class="table-wrap spx-queue-table-wrap">
+          <table class="spx-queue-table">
+            <thead>
+              <tr>
+                <th class="select-col">
+                  <input type="checkbox" class="table-select" data-queue-select-all="1" ${allChecked ? 'checked' : ''} ${removableRows.length ? '' : 'disabled'} ${someChecked ? 'data-indeterminate="1"' : ''} aria-label="全选排队中商品" title="全选 / 取消全选所有排队中商品">
+                </th>
+                <th>#</th>
+                <th>商品</th>
+                <th>目标店铺</th>
+                <th>状态</th>
+                <th>详情 / 用时</th>
+              </tr>
+            </thead>
+            <tbody data-spx-side-list>
+              ${s.items.length ? s.items.map((r, i) => queueTableRow(r, i)).join('') : `<tr class="spx-queue-empty-row"><td colspan="6"><div class="spx-side-empty">当前没有排队的商品。可切换到「上架设置」选项卡新增商品并确认上架。</div></td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+    }
+
+    function renderShopCatTree(storeId, options, savedNames) {
+      const topItems = [];
+      const childrenByGroup = new Map();
+      for (const opt of options) {
+        const g = String(opt.group || '').trim();
+        const name = String(opt.name || '').trim();
+        if (!name) continue;
+        if (!g) {
+          topItems.push({ ...opt, name, group: '' });
+        } else {
+          if (!childrenByGroup.has(g)) childrenByGroup.set(g, []);
+          childrenByGroup.get(g).push({ ...opt, name, group: g });
+        }
+      }
+      const consumedGroups = new Set();
+      const renderOpt = (o, cls = '') => `<label class="spx-shopcat-opt ${cls}"><input type="checkbox" data-action="selectionpool:dlg-shopcat-pick" data-id="${esc(storeId)}" data-name="${esc(o.name)}" ${savedNames.includes(o.name) ? 'checked' : ''}><span>${esc(o.name)}</span></label>`;
+
+      const parts = [];
+      if (topItems.length) {
+        parts.push(`<div class="spx-shopcat-tree">${topItems.map(parent => {
+          const kids = childrenByGroup.get(parent.name) || [];
+          if (kids.length) consumedGroups.add(parent.name);
+          return `<div class="spx-shopcat-node${kids.length ? ' has-children' : ''}">
+            ${renderOpt(parent, kids.length ? 'spx-shopcat-parent' : '')}
+            ${kids.length ? `<div class="spx-shopcat-children">${kids.map(k => renderOpt(k, 'spx-shopcat-child')).join('')}</div>` : ''}
+          </div>`;
+        }).join('')}</div>`);
+      }
+      for (const [group, rows] of childrenByGroup.entries()) {
+        if (consumedGroups.has(group)) continue;
+        parts.push(`<div class="spx-shopcat-group">
+          <div class="spx-shopcat-group-h">${esc(group)}</div>
+          <div class="spx-shopcat-children">${rows.map(k => renderOpt(k, 'spx-shopcat-child')).join('')}</div>
+        </div>`);
+      }
+      return parts.join('');
+    }
+
+    function shelfModalHeaderAndTabs(activeTab, q, qs, chosenCount, stagedCount) {
+      const runBadge = q.running
+        ? (q.stopRequested ? '<span class="spx-badge warn">停止中</span>' : '<span class="spx-badge live">正在上架</span>')
+        : (qs.items.length ? '<span class="spx-badge idle">队列已结束</span>' : '');
+      const progCount = (q.running || qs.items.length) ? ` (${qs.done}/${qs.total})` : '';
+      const subText = activeTab === 'autoShelf'
+        ? (q.running ? `当前批次上架中 (${qs.done}/${qs.total} · 排队 ${qs.queuedCount}) · 可继续新增商品到排队序列` : `待确认上架 ${stagedCount} 件选品 · 已选 ${chosenCount} 家店铺`)
+        : `${q.runId ? `批次 ${esc(q.runId)}` : '暂无执行批次'} · ${q.running ? `已运行 ${esc(elapsed(q.startedAt))}` : (qs.items.length ? `共处理 ${qs.done}/${qs.total} 件` : '可在「上架设置」选择商品并确认上架')}`;
+
+      return `<div class="spx-head">
+        <div class="spx-head-icon ${activeTab === 'queueProgress' ? 'spx-head-icon-prog' : ''}">${svg(activeTab === 'queueProgress' ? 'clock' : 'arrow')}</div>
+        <div class="spx-head-text">
+          <h2>自动上架 ${runBadge}</h2>
+          <span data-spx-prog-sub>${subText}</span>
+        </div>
+        <button type="button" class="spx-x" data-action="selectionpool:dlg-close" title="关闭" aria-label="关闭弹窗">×</button>
+      </div>
+      <div class="spx-modal-tabbar">
+        <div class="selection-tabs spx-shelf-tabs" role="tablist" aria-label="自动上架功能切换">
+          <button type="button" role="tab" aria-selected="${activeTab === 'autoShelf'}" class="selection-tab ${activeTab === 'autoShelf' ? 'active' : ''}" data-action="selectionpool:dlg-open-settings">上架设置</button>
+          <button type="button" role="tab" aria-selected="${activeTab === 'queueProgress'}" class="selection-tab ${activeTab === 'queueProgress' ? 'active' : ''}" data-action="selectionpool:dlg-open-progress" data-spx-tab-progress>查看进度${progCount}</button>
+        </div>
+      </div>
+      ${ui.message ? `<div class="spx-inline-alert ${ui.messageTone === 'error' ? 'is-error' : ''}" role="alert"><span>${esc(ui.message)}</span><button type="button" class="spx-inline-alert-x" data-action="selectionpool:dlg-dismiss-msg" aria-label="关闭提示">×</button></div>` : ''}`;
     }
 
     /**
-     * 弹窗 ①：自动上架（上架前设置 + 本批清单 + 运行中新增到排队序列 + 确认上架）
-     * 不再堆砌完整执行日志与排队监控（统一归入「查看进度」），让页面一目了然。
+     * 弹窗 Tab ①：上架设置（上架前设置 + 本批清单 + 运行中新增到排队序列 + 确认上架）
+     * 与「查看进度」彻底分离，不包含 KPI、执行日志与排队监控表。
      */
     function shelfDialog() {
       const q = queue();
@@ -451,21 +549,12 @@
       const onlineCount = loggedIn().length;
       const priceYuan = fen => (fen == null || !Number.isFinite(Number(fen)) ? '—' : `¥${(Number(fen) / 100).toFixed(2)}`);
 
-      return `<div class="spx-backdrop" data-spx="autoShelf"><div class="spx-dialog spx-setup-dialog">
-        <div class="spx-head">
-          <div class="spx-head-icon">${svg('arrow')}</div>
-          <div class="spx-head-text">
-            <h2>自动上架 · 上架前设置</h2>
-            <span>${q.running ? `当前批次上架中 (${qs.done}/${qs.total} · 排队 ${qs.queuedCount}) · 可继续新增商品到排队序列` : `待确认上架 ${ids.length} 件选品 · 已选 ${chosen.size} 家店铺`}</span>
-          </div>
-          ${(q.running || qs.items.length) ? `<button type="button" class="button small spx-head-jump" data-action="selectionpool:dlg-open-progress">查看进度${q.running ? ` (${qs.done}/${qs.total})` : ''}</button>` : ''}
-          <button type="button" class="spx-x" data-action="selectionpool:dlg-close" title="关闭">×</button>
-        </div>
+      return `<div class="spx-backdrop" data-spx="autoShelf"><div class="spx-dialog spx-shelf spx-setup-dialog">
+        ${shelfModalHeaderAndTabs('autoShelf', q, qs, chosen.size, ids.length)}
 
         ${q.running ? `<div class="spx-live-banner" data-spx-live-banner>
           <span class="spx-live-dot"></span>
           <span class="spx-live-text">正在上架第 <b>${Math.min(qs.done + 1, qs.total)}/${qs.total}</b> 件（成功 ${qs.ok} · 失败 ${qs.fail} · 排队 ${qs.queuedCount}）· 本次确认将自动<b>新增到当前排队序列末尾</b></span>
-          <button type="button" class="link-button" data-action="selectionpool:dlg-open-progress">查看进度详情 →</button>
         </div>` : ''}
 
         <div class="spx-setup-grid">
@@ -492,7 +581,7 @@
             </section>
 
             <section class="spx-card">
-              <div class="spx-card-h"><b>3. 店铺中分类</b><span>选填 · 每家店铺单独记忆 · 可多选</span></div>
+              <div class="spx-card-h"><b>3. 店铺中分类</b><span>选填 · 每家店铺单独记忆 · 支持一级与子分类多选</span></div>
               ${[...chosen].length ? [...chosen].map(id => {
                 const s = list.find(x => x.storeId === id) || { name: id };
                 const options = (ui.shelf.shopCats[id] || []);
@@ -502,12 +591,6 @@
                 const picked = savedNames.length
                   ? `<b>已选 ${savedNames.length} 个</b>：${esc(savedNames.join('、'))}`
                   : '<span class="dim">未设置（上架时不选店铺中分类）</span>';
-                const groups = new Map();
-                for (const o of options) {
-                  const g = String(o.group || '');
-                  if (!groups.has(g)) groups.set(g, []);
-                  groups.get(g).push(o);
-                }
                 return `<div class="spx-shopcat-block">
                   <div class="spx-shopcat-row">
                     <span class="spx-shopcat-shop">${esc(s.name || id)}</span>
@@ -517,12 +600,9 @@
                     <button type="button" class="button small" data-action="selectionpool:dlg-shelf-shopcat-refresh" data-id="${esc(id)}" ${catState.busy ? 'disabled' : ''}>${catState.busy ? '读取中…' : '刷新'}</button>
                   </div>
                   ${open ? `<div class="spx-shopcat-panel">
-                    ${catState.busy ? '<p class="spx-note">正在读取本店分类…</p>' : ''}
+                    ${catState.busy ? '<p class="spx-note">正在读取本店分类（含子分类）…</p>' : ''}
                     ${catState.error ? `<p class="spx-note spx-error">${esc(catState.error)}</p>` : ''}
-                    ${options.length ? [...groups.entries()].map(([group, rows]) => `<div class="spx-shopcat-group">
-                      ${group ? `<div class="spx-shopcat-group-h">${esc(group)}</div>` : ''}
-                      ${rows.map(o => `<label class="spx-shopcat-opt"><input type="checkbox" data-action="selectionpool:dlg-shopcat-pick" data-id="${esc(id)}" data-name="${esc(o.name)}" ${savedNames.includes(o.name) ? 'checked' : ''}><span>${esc(o.name)}</span></label>`).join('')}
-                    </div>`).join('') : (catState.busy ? '' : '<p class="spx-note">点「刷新」读取本店分类</p>')}
+                    ${options.length ? renderShopCatTree(id, options, savedNames) : (catState.busy ? '' : '<p class="spx-note">点「刷新」读取本店分类（含子分类）</p>')}
                     <div class="spx-shopcat-foot"><span class="spacer"></span>
                       <button type="button" class="link-button" data-action="selectionpool:dlg-shopcat-clear" data-id="${esc(id)}">清空本店分类</button></div>
                   </div>` : ''}
@@ -615,14 +695,13 @@
         <div class="spx-foot">
           <span class="spx-hint">${q.running ? '确认后将保留当前运行进度，把本批商品按顺序追加到排队序列末尾。' : `目标：${chosen.size || 0} 家店铺 · 本批 ${ids.length} 件选品 · 共生成 ${ids.length * Math.max(1, chosen.size)} 条排队任务`}</span>
           <button type="button" class="button small" data-action="selectionpool:dlg-close">取消</button>
-          <button type="button" class="button small" data-action="selectionpool:dlg-open-progress">查看上架进度</button>
           <button type="button" class="button primary small" data-action="selectionpool:dlg-shelf-start" ${ui.busy ? 'disabled' : ''}>${q.running ? `确认并新增到排队 (${ids.length})` : `确认本批上架 (${ids.length})`}</button>
         </div>
       </div></div>`;
     }
 
     /**
-     * 弹窗 ②：查看上架进度（总览指标 + 当前商品详情 + 执行日志 + 待处理任务 + 右侧排队序列含单选/多选/全选移除）
+     * 弹窗 Tab ②：查看进度（KPI 总览 + 当前商品详情 + 执行日志 + 待处理任务 + 右侧排队表格含 .table-select 与 .compliance-batch-bar）
      */
     function progressDialog() {
       const q = queue();
@@ -630,23 +709,12 @@
       const lines = (q.lines || []).length ? q.lines : (ui.progress.logs || []).map(l => l.line || '').filter(Boolean);
       const tasks = (resume().items || []).slice(0, 6);
       const running = s.running;
-      const runBadge = q.running
-        ? (q.stopRequested ? '<span class="spx-badge warn">停止中</span>' : '<span class="spx-badge live">正在上架</span>')
-        : (s.items.length ? '<span class="spx-badge idle">队列已结束</span>' : '<span class="spx-badge idle">空闲</span>');
 
       return `<div class="spx-backdrop" data-spx="queueProgress"><div class="spx-dialog spx-shelf spx-progress-dialog">
-        <div class="spx-head">
-          <div class="spx-head-icon spx-head-icon-prog">${svg('clock')}</div>
-          <div class="spx-head-text">
-            <h2>上架进度与排队详情 ${runBadge}</h2>
-            <span data-spx-prog-sub>${q.runId ? `批次 ${esc(q.runId)}` : '暂无执行批次'} · ${q.running ? `已运行 ${esc(elapsed(q.startedAt))}` : (s.items.length ? `共处理 ${s.done}/${s.total} 件` : '可在「自动上架」添加商品并确认上架')}</span>
-          </div>
-          <button type="button" class="button small" data-action="selectionpool:dlg-open-settings">+ 新增排队 / 上架设置</button>
-          <button type="button" class="spx-x" data-action="selectionpool:dlg-close" title="后台运行并收起弹窗">×</button>
-        </div>
+        ${shelfModalHeaderAndTabs('queueProgress', q, s, ui.shelf.shops.size, ui.shelf.itemIds.length)}
 
-        <div class="spx-shelf-main">
-          <div class="spx-body spx-prog-main">
+        <div class="spx-prog-wrap">
+          <div class="spx-prog-top">
             <div class="spx-kpi-grid" data-spx-kpi>
               <div class="spx-kpi"><span>总进度</span><b>${s.percent}%</b><small>${s.done} / ${s.total} 件</small></div>
               <div class="spx-kpi ok"><span>已入仓</span><b>${s.ok}</b><small>成功放入仓库</small></div>
@@ -657,36 +725,39 @@
             <div class="spx-spotlight" data-spx-spotlight>
               <div class="spx-spotlight-top">
                 <strong data-spx-progress>${running ? `正在上架：选品#${esc(running.itemId)} · ${esc(short(queueTitle(running), 36))}` : esc(s.current)}</strong>
-                <span>${running ? `${esc(running.shopName || '目标店铺')} · 已用时 ${esc(elapsed(running.startedAt))}` : `${s.done}/${s.total} (${s.percent}%)`}</span>
+                <span data-spx-spotlight-meta>${running ? `${esc(running.shopName || '目标店铺')} · 已用时 ${esc(elapsed(running.startedAt))}` : `${s.done}/${s.total} (${s.percent}%)`}</span>
               </div>
               <progress class="spx-bar-native" value="${s.percent}" max="100" data-spx-progress-bar aria-label="上架总进度"></progress>
-              <div class="spx-spotlight-msg">${esc(q.title || (running ? '正在执行店铺发布页填充…' : '队列日志与每件商品实时详情会在这里持续更新。'))}</div>
+              <div class="spx-spotlight-msg" data-spx-spotlight-msg>${esc(q.title || (running ? '正在执行店铺发布页填充…' : '队列日志与每件商品实时详情会在这里持续更新。'))}</div>
             </div>
-
-            <section class="spx-progress-log-sec">
-              <div class="spx-log-head">
-                <b>执行详情与实时日志</b>
-                <span data-spx-log-count>${lines.length} 行</span>
-                <button type="button" class="link-button" data-action="selectionpool:dlg-shelf-log-copy">复制全部</button>
-                <button type="button" class="link-button" data-action="selectionpool:dlg-shelf-log-more">${ui.progress.logAll ? '只看最近 80 行' : '看全部'}</button>
-              </div>
-              <div class="spx-log" data-spx-log="1">${lines.length ? [...lines].slice(ui.progress.logAll ? -600 : -80).map(l => `<div>${esc(l)}</div>`).join('') : '<div class="dim">还没有执行日志。点击右上角「+ 新增排队 / 上架设置」启动一批上架后，这里会逐行显示执行详情。</div>'}</div>
-            </section>
-
-            ${tasks.length ? `<section class="spx-resume"><div class="spx-resume-head"><b>没入仓、可以接着处理的任务 (${tasks.length})</b><span>${esc(resume().note || '')}</span></div>
-              ${tasks.map(r => `<div class="spx-resume-row"><div class="spx-resume-text"><strong>选品#${esc(r.itemId)} → ${esc(short(r.title || '未命名商品', 24))}</strong><span>${esc(short(r.reason || '参数或类目不全', 90))}</span></div>
-                <div class="spx-resume-acts"><button type="button" class="button small" data-action="selectionpool:dlg-resume-open-shop" data-id="${esc(r.itemId)}">打开店铺窗口</button>
-                <button type="button" class="button primary small" data-action="selectionpool:dlg-resume-continue" data-id="${esc(r.itemId)}">继续入仓</button></div></div>`).join('')}
-              <p class="spx-resume-tail">${esc(resume().tail || '')}</p></section>` : ''}
           </div>
 
-          ${shelfProgressSide(q)}
+          <div class="spx-prog-split">
+            <div class="spx-prog-logs-col">
+              <section class="spx-progress-log-sec">
+                <div class="spx-log-head">
+                  <b>执行详情与实时日志</b>
+                  <span data-spx-log-count>${lines.length} 行</span>
+                  <button type="button" class="link-button" data-action="selectionpool:dlg-shelf-log-copy">复制全部</button>
+                  <button type="button" class="link-button" data-action="selectionpool:dlg-shelf-log-more">${ui.progress.logAll ? '只看最近 80 行' : '看全部'}</button>
+                </div>
+                <div class="spx-log" data-spx-log="1">${lines.length ? [...lines].slice(ui.progress.logAll ? -600 : -80).map(l => `<div>${esc(l)}</div>`).join('') : '<div class="dim">还没有执行日志。切换到「上架设置」选择商品并确认上架后，这里会逐行显示执行详情。</div>'}</div>
+              </section>
+
+              ${tasks.length ? `<section class="spx-resume"><div class="spx-resume-head"><b>没入仓、可以接着处理的任务 (${tasks.length})</b><span>${esc(resume().note || '')}</span></div>
+                ${tasks.map(r => `<div class="spx-resume-row"><div class="spx-resume-text"><strong>选品#${esc(r.itemId)} → ${esc(short(r.title || '未命名商品', 24))}</strong><span>${esc(short(r.reason || '参数或类目不全', 90))}</span></div>
+                  <div class="spx-resume-acts"><button type="button" class="button small" data-action="selectionpool:dlg-resume-open-shop" data-id="${esc(r.itemId)}">打开店铺窗口</button>
+                  <button type="button" class="button primary small" data-action="selectionpool:dlg-resume-continue" data-id="${esc(r.itemId)}">继续入仓</button></div></div>`).join('')}
+                <p class="spx-resume-tail">${esc(resume().tail || '')}</p></section>` : ''}
+            </div>
+
+            ${shelfQueuePanel(q)}
+          </div>
         </div>
 
         <div class="spx-foot">
-          <span class="spx-hint">右侧可单选、多选或全选「排队中」的商品移出排队；点「停止上架」会立刻中断当前商品并关闭发布窗口；点「后台运行」可收起窗口不影响队列执行。</span>
+          <span class="spx-hint">右侧支持全选、反选及批量移除排队中商品；点「停止上架」将中断当前商品并清空剩余未执行队列。</span>
           <button type="button" class="button small" data-action="selectionpool:dlg-shelf-stop" ${q.running && !q.stopRequested ? '' : 'disabled'}>${q.stopRequested ? '正在停止…' : '停止上架'}</button>
-          <button type="button" class="button small" data-action="selectionpool:dlg-open-settings">新增排队 / 上架设置</button>
           <button type="button" class="button primary small" data-action="selectionpool:dlg-close">后台运行</button>
         </div>
       </div></div>`;
@@ -1131,14 +1202,34 @@
       });
     }
 
+    function showDialogFeedback(text, isError = false) {
+      const msg = String(text || '');
+      if (ui.name === 'manualForm') {
+        ui.form.message = msg;
+        render();
+        return;
+      }
+      if (ui.name === 'category') {
+        ui.cat.message = msg;
+        render();
+        return;
+      }
+      if (ui.name === 'detail' && isError) {
+        ui.detail.error = msg;
+        render();
+        return;
+      }
+      setDialogMessage(msg, isError);
+    }
+
     async function openShop(itemId, reason) {
-      if (!state.storeId) { toast('请先在左上角选择店铺', true); return null; }
+      if (!state.storeId) { showDialogFeedback('请先在左上角选择店铺', true); return null; }
       try {
         const info = await api('selectionpool.openShopPublishPage', { itemId, storeId: state.storeId, reason: reason || '参数或类目不全，人工在店铺页面补全' });
         if (typeof openShopPage === 'function') await openShopPage(info);
         await reload();
         return info;
-      } catch (error) { toast(String(error?.message || error), true); return null; }
+      } catch (error) { showDialogFeedback(String(error?.message || error), true); return null; }
     }
 
     async function handleAction(action, target) {
@@ -1154,8 +1245,8 @@
         case 'log-copy': {
           const run = (ui.logs.runs || []).find(r => r.runId === ui.logs.runId);
           const text = ((run?.lines || []).map(r => r.line).join('\n')) || '';
-          try { await navigator.clipboard.writeText(text); toast(`已复制 ${text ? text.split('\n').length : 0} 行日志`); }
-          catch { toast('复制失败，请手动选中日志复制', true); }
+          try { await navigator.clipboard.writeText(text); }
+          catch { ui.logs = { ...ui.logs, error: '复制失败，请手动选中日志复制' }; render(); }
           return true;
         }
         case 'detail-tab': ui.detail.tab = ['overview', 'sku', 'params', 'desc', 'reviews', 'source'].includes(value) ? value : 'overview'; render(); return true;
@@ -1170,30 +1261,33 @@
         }
         case 'detail-open': {
           const url = String(target.dataset.url || '');
-          if (!/^https:\/\//i.test(url)) { toast('这个地址打不开', true); return true; }
+          if (!/^https:\/\//i.test(url)) { showDialogFeedback('这个地址打不开', true); return true; }
           try {
             const result = await api('app.openExternal', { url });
-            if (!result?.ok) toast(result?.message || '打不开这个地址', true);
-          } catch (error) { toast(String(error?.message || error), true); }
+            if (!result?.ok) showDialogFeedback(result?.message || '打不开这个地址', true);
+          } catch (error) { showDialogFeedback(String(error?.message || error), true); }
           return true;
         }
         case 'detail-video': {
           const url = String((ui.detail.data?.videos || [])[Number(target.dataset.index)] || '');
           try {
             const result = await api('app.openExternal', { url });
-            if (!result?.ok) toast(result?.message || '这个视频没有直链，打不开', true);
-          } catch (error) { toast(String(error?.message || error), true); }
+            if (!result?.ok) showDialogFeedback(result?.message || '这个视频没有直链，打不开', true);
+          } catch (error) { showDialogFeedback(String(error?.message || error), true); }
           return true;
         }
+        case 'dismiss-msg': ui.message = ''; render(); return true;
         case 'open-progress': open('queueProgress'); return true;
         case 'open-settings': open('autoShelf'); return true;
         case 'shelf-all-shops': {
           for (const row of loggedIn()) ui.shelf.shops.add(row.storeId);
+          ui.message = '';
           render(); return true;
         }
         case 'batch-add': {
           if (id > 0 && !ui.shelf.itemIds.includes(id)) {
             ui.shelf.itemIds = [...ui.shelf.itemIds, id];
+            ui.message = '';
             render();
           }
           return true;
@@ -1205,6 +1299,7 @@
             if (rid > 0 && !merged.includes(rid)) merged.push(rid);
           }
           ui.shelf.itemIds = merged;
+          ui.message = '';
           render(); return true;
         }
         case 'batch-remove': {
@@ -1215,16 +1310,38 @@
           ui.shelf.itemIds = [];
           render(); return true;
         }
+        case 'queue-select-all': {
+          const q = queue();
+          const removable = (q.items || []).filter(isQueueRemovable);
+          const allSelected = removable.length > 0 && removable.every(r => ui.progress.selectedQueueIds.has(r.queueId));
+          if (allSelected) {
+            for (const r of removable) ui.progress.selectedQueueIds.delete(r.queueId);
+          } else {
+            for (const r of removable) ui.progress.selectedQueueIds.add(r.queueId);
+          }
+          updateQueueSelectionUi();
+          return true;
+        }
+        case 'queue-invert': {
+          const q = queue();
+          const removable = (q.items || []).filter(isQueueRemovable);
+          for (const r of removable) {
+            if (ui.progress.selectedQueueIds.has(r.queueId)) ui.progress.selectedQueueIds.delete(r.queueId);
+            else ui.progress.selectedQueueIds.add(r.queueId);
+          }
+          updateQueueSelectionUi();
+          return true;
+        }
         case 'queue-remove': {
           const q = queue();
           const removableIds = new Set((q.items || []).filter(isQueueRemovable).map(r => r.queueId));
           const toRemove = [...ui.progress.selectedQueueIds].filter(qid => removableIds.has(qid));
-          if (!toRemove.length) { toast('请先在右侧队列勾选要移除的商品', true); return true; }
+          if (!toRemove.length) { setDialogMessage('请先在右侧队列勾选要移除的排队项', true); return true; }
           const res = await api('selectionpool.queueRemove', { queueIds: toRemove }).catch(error => ({ error: String(error?.message || error) }));
-          if (res?.error) { toast(res.error, true); return true; }
+          if (res?.error) { setDialogMessage(res.error, true); return true; }
           for (const qid of toRemove) ui.progress.selectedQueueIds.delete(qid);
+          ui.message = '';
           if (res?.queue) applyQueue(res.queue);
-          toast(`已从排队序列移除 ${Number(res?.removedCount) || toRemove.length} 件商品`);
           await refreshProgress();
           return true;
         }
@@ -1244,9 +1361,6 @@
           const storeId = String(target.dataset.id || '');
           ui.shelf.shopcatOpen = storeId;
           await loadShelfCats({ refresh: true, ids: [storeId] });
-          const rows = ui.shelf.shopCats[storeId] || [];
-          const error = ui.shelf.shopCatState[storeId]?.error;
-          toast(rows.length ? `已读到 ${rows.length} 个「店铺中分类」` : (error || '没读到店铺中分类，可到店铺发布页确认这一项'), !rows.length);
           return true;
         }
         case 'shopcat-toggle': {
@@ -1259,8 +1373,13 @@
         case 'shopcat-clear': {
           const storeId = String(target.dataset.id || '');
           const next = await api('selectionpool.saveAutoShelfConfig', { profileId: storeId, shopCategoryNameList: [] }).catch(() => null);
-          if (next) { ui.shelf.config = next; toast('已清空这家店铺的店铺中分类'); }
-          else toast('清空失败，请重试', true);
+          if (next) {
+            ui.shelf.config = next;
+            ui.message = '';
+          } else {
+            setDialogMessage('清空本店分类失败，请重试', true);
+            return true;
+          }
           render();
           return true;
         }
@@ -1268,8 +1387,8 @@
         case 'shelf-log-copy': {
           const q = queue();
           const text = ((q.lines || []).length ? q.lines : (ui.progress.logs || []).map(l => l.line || '')).join('\n');
-          try { await navigator.clipboard.writeText(text); toast(`已复制 ${text ? text.split('\n').length : 0} 行日志`); }
-          catch { toast('复制失败，请手动选中日志复制', true); }
+          try { await navigator.clipboard.writeText(text); }
+          catch { setDialogMessage('复制日志失败，请手动选中复制', true); }
           return true;
         }
         case 'shelf-shopcat': {
@@ -1279,24 +1398,23 @@
         case 'shelf-stop': {
           // 用户 2026-11-21：点停止必须马上停，不是「跑完这一单再停」
           const res = await api('selectionpool.queueStop', {}).catch(() => null);
-          toast(res && res.running === false ? '已停止上架：当前商品已中断，排队商品不再执行' : '已停止上架：当前商品正在中断…');
           if (res) applyQueue(res);
           await refreshProgress(); return true;
         }
         case 'shelf-start': {
           const ids = ui.shelf.itemIds.length ? ui.shelf.itemIds : [];
           const shopIds = [...ui.shelf.shops].filter(sid => loggedIn().some(x => x.storeId === sid));
-          if (!ids.length) { toast('请先在右侧添加或从列表勾选要上架的选品', true); return true; }
-          if (!shopIds.length) { toast('请先勾选至少一家已登录的目标店铺（未登录店铺请先到「店铺登录」登录）', true); return true; }
-          ui.busy = true; render();
+          if (!ids.length) { setDialogMessage('请先在右侧添加或从列表勾选要上架的选品', true); return true; }
+          if (!shopIds.length) { setDialogMessage('请先勾选至少一家已登录的目标店铺（未登录店铺请先到「店铺登录」登录）', true); return true; }
+          ui.busy = true;
+          ui.message = '';
+          render();
           try {
-            const wasRunning = Boolean(queue().running);
-            const result = await api('selectionpool.startAutoShelf', { itemIds: ids, storeIds: shopIds });
+            await api('selectionpool.startAutoShelf', { itemIds: ids, storeIds: shopIds });
             ui.shelf.itemIds = [];
-            toast(result?.appended || wasRunning ? `已新增 ${ids.length} 件选品到当前排队序列` : `已确认本批 ${ids.length} 件上架，正在后台依次处理`);
             open('queueProgress');
           } catch (error) {
-            toast(String(error?.message || error), true);
+            setDialogMessage(String(error?.message || error), true);
           } finally {
             ui.busy = false;
             render();
@@ -1326,42 +1444,44 @@
         case 'pub-copy': {
           const row = (pub().rows || []).find(r => r.id === target.dataset.id);
           const text = row?.diagnostic || row?.message || '';
-          try { await navigator.clipboard.writeText(text); toast('已复制排查信息'); }
-          catch { toast('复制失败，请展开原因后手动复制', true); }
+          try { await navigator.clipboard.writeText(text); }
+          catch { setDialogMessage('复制失败，请展开原因后手动复制', true); }
           return true;
         }
         case 'pub-open-form': open('manualForm', { itemId: id }); return true;
         case 'pub-open-shop': await openShop(id, '从失败记录打开，人工核对并补全'); return true;
         case 'pub-resume': {
           const result = await api('selectionpool.resumeManualShelf', { itemId: id }).catch(error => ({ error: String(error?.message || error) }));
-          toast(result?.error ? result.error : (result?.landed ? `已确认入仓 #${result.warehouseItemId}` : '已重新执行上架检查'), Boolean(result?.error));
+          if (result?.error) setDialogMessage(result.error, true);
           await reload(); await refreshPublication(); return true;
         }
         case 'resume-open-shop': await openShop(id, '继续处理没入仓的任务'); return true;
         case 'resume-continue': {
           const result = await api('selectionpool.resumeManualShelf', { itemId: id }).catch(error => ({ error: String(error?.message || error) }));
-          toast(result?.error ? result.error : (result?.landed ? `继续入仓成功 #${result.warehouseItemId}` : '已重新执行上架检查'), Boolean(result?.error));
+          if (result?.error) setDialogMessage(result.error, true);
           await reload(); await refreshProgress(); return true;
         }
-        case 'form-section': ui.form.section = value || 'basic'; render(); return true;        case 'form-save': {
+        case 'form-section': ui.form.section = value || 'basic'; render(); return true;
+        case 'form-save': {
           const result = await collectFormFields().catch(error => ({ error: String(error?.message || error) }));
-          if (result?.error) toast(result.error, true);
-          else { toast('补全结果已回写到这条选品'); await loadForm(ui.form.itemId); await reload(); }
+          if (result?.error) ui.form.message = result.error;
+          else { ui.form.message = '补全结果已回写到这条选品'; await loadForm(ui.form.itemId); await reload(); }
+          render();
           return true;
         }
         case 'form-open-shop': await openShop(ui.form.itemId, '人工补全参数'); return true;
         case 'form-resume': {
           await collectFormFields().catch(() => null);
-          const result = await api('selectionpool.resumeManualShelf', { itemId: ui.form.itemId, warehouseItemId: readFormFields().warehouseItemId }).catch(error => ({ error: String(error?.message || error) }));
-          toast(result?.error ? result.error : (result?.landed ? `已确认入仓 #${result.warehouseItemId}` : '已重新执行上架检查'), Boolean(result?.error));
+          await api('selectionpool.resumeManualShelf', { itemId: ui.form.itemId, warehouseItemId: readFormFields().warehouseItemId }).catch(() => null);
           close(); await reload(); return true;
         }
         case 'form-add-attr': {
           const nameEl = document.querySelector('[data-dlg-form-new-name]');
           const valueEl = document.querySelector('[data-dlg-form-new-value]');
           const name = String(nameEl?.value || '').trim(), val = String(valueEl?.value || '').trim();
-          if (!name) { toast('请先填参数名', true); return true; }
+          if (!name) { ui.form.message = '请先填参数名'; render(); return true; }
           ui.form.attributes = [...(ui.form.attributes || []), { name, value: val }];
+          ui.form.message = '';
           render(); return true;
         }
         case 'form-read-category': {
@@ -1369,8 +1489,14 @@
             itemId: ui.form.itemId, productId: ui.form.detail?.product?.id,
             platform: ui.form.detail?.product?.platform, storeId: state.storeId, refresh: true,
           }).catch(error => ({ ok: false, message: String(error?.message || error) }));
-          if (result?.ok) { toast(`已补读类目 ${result.data?.leafId || ''}`); await loadForm(ui.form.itemId); }
-          else toast(result?.message || '没读到类目', true);
+          if (result?.ok) {
+            await loadForm(ui.form.itemId);
+            ui.form.message = `已补读类目 ${result.data?.leafId || ''}`;
+            render();
+          } else {
+            ui.form.message = result?.message || '没读到类目';
+            render();
+          }
           return true;
         }
         case 'form-category': open('category', { itemId: ui.form.itemId }); return true;
@@ -1417,26 +1543,27 @@
         }
         case 'cat-save': {
           const result = await api('selectionpool.categorySave', { itemId: ui.cat.itemId, categoryId: ui.cat.picked?.id, categoryPath: ui.cat.picked?.path }).catch(error => ({ error: String(error?.message || error) }));
-          if (result?.error) toast(result.error, true);
-          else { toast('类目已保存'); if (ui.form.itemId === ui.cat.itemId) await loadForm(ui.cat.itemId); else close(); await reload(); }
+          if (result?.error) { ui.cat.message = result.error; render(); }
+          else { if (ui.form.itemId === ui.cat.itemId) await loadForm(ui.cat.itemId); else close(); await reload(); }
           return true;
         }
         case 'personal-login': {
           // 复刻老软件「首页个人淘宝号」：开独立会话登录窗口，登录成功自动关窗。
           const result = await api('personaltaobao.login', {}).catch(error => ({ ok: false, message: String(error?.message || error) }));
-          if (result?.ok) toast('已打开个人淘宝号登录窗口，请在窗口里登录（扫码/账号均可），登录成功会自动关闭');
-          else toast(result?.message || '打不开登录窗口', true);
+          ui.cat.message = result?.ok ? '已打开个人淘宝号登录窗口，请在窗口里登录，登录成功会自动关闭' : (result?.message || '打不开登录窗口');
+          render();
           return true;
         }
         case 'cat-read': {
           // 老软件校验 /^\d{6,20}$/：必须把商品 ID 一起传上去，否则必然报「商品 ID 不对」。
-          if (!ui.cat.productId) { toast('这条选品还没有商品 ID，请用插件重新采集', true); return true; }
+          if (!ui.cat.productId) { ui.cat.message = '这条选品还没有商品 ID，请用插件重新采集'; render(); return true; }
           const result = await api('selectionpool.categoryReadSource', { itemId: ui.cat.itemId, productId: ui.cat.productId, storeId: ui.cat.profileId, refresh: true }).catch(error => ({ ok: false, message: String(error?.message || error) }));
-          toast(result?.ok ? `已按商品 ID 补读类目 ${result.data?.leafId || ''}` : (result?.message || '没读到类目'), !result?.ok);
+          ui.cat.message = result?.ok ? `已按商品 ID 补读类目 ${result.data?.leafId || ''}` : (result?.message || '没读到类目');
           if (result?.needPersonalLogin) {
             void api('personaltaobao.status', {}).then(s => { ui.cat.personal = Boolean(s?.loggedIn); render(); }).catch(() => undefined);
           }
           if (result?.ok) { close(); await reload(); }
+          else render();
           return true;
         }
         default: return false;
@@ -1453,19 +1580,29 @@
       const allBox = side.querySelector('[data-queue-select-all]');
       if (allBox) {
         allBox.checked = removable.length > 0 && selected.length === removable.length;
+        allBox.indeterminate = selected.length > 0 && selected.length < removable.length;
         allBox.disabled = !removable.length;
       }
+      const selAllBtn = side.querySelector('[data-action="selectionpool:dlg-queue-select-all"]');
+      if (selAllBtn) selAllBtn.disabled = !removable.length;
+      const invertBtn = side.querySelector('[data-action="selectionpool:dlg-queue-invert"]');
+      if (invertBtn) invertBtn.disabled = !removable.length;
+
       const selCountEl = side.querySelector('[data-spx-queue-selcount]');
-      if (selCountEl) selCountEl.innerHTML = selected.length ? `已选 <b>${selected.length}</b>` : '';
+      if (selCountEl) {
+        selCountEl.innerHTML = selected.length
+          ? `已选 <b>${selected.length}</b> / 可移除 ${removable.length}`
+          : (removable.length ? `可移除 <b>${removable.length}</b> 项` : '暂无可移除项');
+      }
       const removeBtn = side.querySelector('[data-action="selectionpool:dlg-queue-remove"]');
       if (removeBtn) {
         removeBtn.disabled = !selected.length;
-        removeBtn.textContent = selected.length ? `移除排队 (${selected.length})` : '移除排队';
+        removeBtn.textContent = selected.length ? `批量移除选定排队项 (${selected.length})` : '批量移除选定排队项';
       }
       side.querySelectorAll('[data-queue-select]').forEach(box => {
         const isChecked = ui.progress.selectedQueueIds.has(box.dataset.queueSelect);
         if (box.checked !== isChecked) box.checked = isChecked;
-        box.closest('.spx-side-row')?.classList.toggle('is-checked', isChecked);
+        box.closest('tr')?.classList.toggle('is-checked', isChecked);
       });
     }
 
@@ -1511,7 +1648,7 @@
       const t = event.target;
       if (!t?.dataset) return false;
       if (t.dataset.action === 'selectionpool:dlg-shopcat-pick') {
-        // 店铺中分类多选：把该店当前所有勾选的名字整体保存（勾/取消都走这里）
+        // 店铺中分类多选：把该店当前所有勾选的名字整体保存（勾/取消都走这里，不弹右下角 toast）
         const storeId = String(t.dataset.id || '');
         const names = Array.from(document.querySelectorAll('[data-action="selectionpool:dlg-shopcat-pick"]'))
           .filter(box => String(box.dataset.id || '') === storeId && box.checked)
@@ -1519,9 +1656,9 @@
           .filter(Boolean);
         void api('selectionpool.saveAutoShelfConfig', { profileId: storeId, shopCategoryNameList: names }).then(next => {
           if (next) ui.shelf.config = next;
+          ui.message = '';
           render();
-          toast(names.length ? `已记住店铺中分类：${names.join('、')}` : '已清除这家店铺的店铺中分类');
-        }).catch(() => toast('店铺中分类保存失败，请重试', true));
+        }).catch(() => setDialogMessage('店铺中分类保存失败，请重试', true));
         return true;
       }
       if (t.dataset.queueSelect !== undefined) {
@@ -1557,6 +1694,7 @@
       if (action === 'selectionpool:dlg-shelf-shop') {
         const key = t.dataset.id;
         t.checked ? ui.shelf.shops.add(key) : ui.shelf.shops.delete(key);
+        ui.message = '';
         render();
         // 新勾上的店铺：缓存里有店铺中分类就直接带出来（不主动开窗口）
         if (t.checked) void loadShelfCats({ ids: [key] });
@@ -1579,7 +1717,7 @@
     }
 
     /**
-     * 队列进度实时更新：局部更新进度条、KPI、日志和右侧排队列表，保留用户复选框与滚动条位置。
+     * 队列进度实时更新：局部更新进度条、KPI、日志和右侧排队表格，保留用户复选框与滚动条位置。
      */
     function applyQueue(q) {
       if (!q) return;
@@ -1587,6 +1725,13 @@
       ui.shelf.queue = q;
       if (data()) data().queue = q;
       pruneQueueSelection(q);
+
+      const s = queueSideStats(q);
+      const tabProg = document.querySelector('[data-spx-tab-progress]');
+      if (tabProg) {
+        const progCount = (q.running || s.items.length) ? ` (${s.done}/${s.total})` : '';
+        tabProg.textContent = `查看进度${progCount}`;
+      }
 
       if (ui.name === 'autoShelf') {
         const hasBanner = Boolean(document.querySelector('[data-spx-live-banner]'));
@@ -1596,20 +1741,14 @@
           render();
           return;
         }
-        const s = queueSideStats(q);
         const banner = document.querySelector('[data-spx-live-banner] .spx-live-text');
         if (banner) {
           banner.innerHTML = `正在上架第 <b>${Math.min(s.done + 1, s.total)}/${s.total}</b> 件（成功 ${s.ok} · 失败 ${s.fail} · 排队 ${s.queuedCount}）· 本次确认将自动<b>新增到当前排队序列末尾</b>`;
-        }
-        const jumpBtn = document.querySelector('[data-action="selectionpool:dlg-open-progress"]');
-        if (jumpBtn && jumpBtn.classList.contains('spx-head-jump')) {
-          jumpBtn.textContent = q.running ? `查看进度 (${s.done}/${s.total})` : '查看进度';
         }
         return;
       }
       if (ui.name !== 'queueProgress') return;
 
-      const s = queueSideStats(q);
       const kpi = document.querySelector('[data-spx-kpi]');
       if (kpi) {
         kpi.innerHTML = `
@@ -1621,6 +1760,14 @@
       const head = document.querySelector('[data-spx-progress]');
       if (head) {
         head.textContent = s.running ? `正在上架：选品#${s.running.itemId} · ${short(queueTitle(s.running), 36)}` : s.current;
+      }
+      const meta = document.querySelector('[data-spx-spotlight-meta]');
+      if (meta) {
+        meta.textContent = s.running ? `${s.running.shopName || '目标店铺'} · 已用时 ${elapsed(s.running.startedAt)}` : `${s.done}/${s.total} (${s.percent}%)`;
+      }
+      const msg = document.querySelector('[data-spx-spotlight-msg]');
+      if (msg) {
+        msg.textContent = q.title || (s.running ? '正在执行店铺发布页填充…' : '队列日志与每件商品实时详情会在这里持续更新。');
       }
       const bar = document.querySelector('[data-spx-progress-bar]');
       if (bar) bar.value = s.percent;
@@ -1636,12 +1783,15 @@
         if (current) current.textContent = `排队中 ${s.queuedCount} · 合计 ${s.items.length}`;
         const percent = side.querySelector('[data-spx-side-percent]');
         if (percent) percent.textContent = `${s.percent}%`;
+        const wrap = side.querySelector('.spx-queue-table-wrap');
         const list = side.querySelector('[data-spx-side-list]');
         if (list) {
-          const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 30;
-          const savedTop = list.scrollTop;
-          list.innerHTML = s.items.length ? s.items.map((r, i) => queueSideRow(r, i)).join('') : '<div class="spx-side-empty">当前没有排队的商品。可点击右上角「+ 新增排队 / 上架设置」选择选品并确认上架。</div>';
-          list.scrollTop = atBottom ? list.scrollHeight : savedTop;
+          const atBottom = wrap ? (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 30) : false;
+          const savedTop = wrap ? wrap.scrollTop : 0;
+          list.innerHTML = s.items.length
+            ? s.items.map((r, i) => queueTableRow(r, i)).join('')
+            : `<tr class="spx-queue-empty-row"><td colspan="6"><div class="spx-side-empty">当前没有排队的商品。可切换到「上架设置」选项卡新增商品并确认上架。</div></td></tr>`;
+          if (wrap) wrap.scrollTop = atBottom ? wrap.scrollHeight : savedTop;
         }
         updateQueueSelectionUi();
       }
