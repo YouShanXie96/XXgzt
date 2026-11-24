@@ -1,6 +1,7 @@
 'use strict';
 
 (() => {
+  if (window.xx) return;
   const progressListeners = new Set();
   const updateListeners = new Set();
   let eventSource = null;

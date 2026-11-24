@@ -662,12 +662,18 @@ function fillFormScript(pairs) {
   async function pickFromDropdown(comp,value){
     var trig=chooser(comp);
     if(!trig)return false;
-    try{trig.click();}catch(e){return false;}
-    await wait(300);
+    var fireTarget=trig.querySelector('.next-select-trigger,.next-select-inner,.next-select-arrow,input')||trig;
+    try{
+      var ev={bubbles:true,cancelable:true,view:window};
+      fireTarget.dispatchEvent(new MouseEvent('mousedown',ev));
+      fireTarget.dispatchEvent(new MouseEvent('mouseup',ev));
+      fireTarget.click();
+    }catch(e){return false;}
+    await wait(350);
     var want=norm(value);
-    var overlays=xxAll('.next-overlay-inner,.next-menu-wrapper,[class*="overlay-inner"],[class*="dropdown-menu"]').filter(vis);
+    var overlays=xxAll('.next-overlay-wrapper.opened .next-overlay-inner,.next-overlay-wrapper.opened .next-menu,.next-select-popup-wrap,.next-overlay-inner,.next-menu-wrapper,[role="listbox"],[class*="overlay-inner"],[class*="dropdown-menu"]').filter(vis);
     for(var o=0;o<overlays.length;o++){
-      var opts=Array.prototype.slice.call(overlays[o].querySelectorAll('.next-menu-item,[role="option"],li,div[class*="option"]')).filter(function(n){return n.children.length<=2&&vis(n);});
+      var opts=Array.prototype.slice.call(overlays[o].querySelectorAll('.next-menu-item,[role="option"],li,div[class*="option"]')).filter(function(n){return n.children.length<=2&&vis(n)&&!(n.querySelector&&n.querySelector('input'));});
       var exact=null,near=null;
       for(var i=0;i<opts.length;i++){
         var t=norm(opts[i].textContent);
@@ -2233,22 +2239,32 @@ function readShopCategoryOptionsScript() {
     trigger.click();
   }catch(e){}
   await wait(900);
-  function boxOf(n){var b=null;try{b=n.querySelector('input[type="checkbox"],.next-checkbox,[role="checkbox"]');}catch(e){}return b;}
-  var nodes=[],docs=xxDocs();
-  var sels=['.next-menu-item','[role="option"]','[role="menuitem"]','[class*="menu-item"]','[class*="option"]'];
-  for(var d=0;d<docs.length;d++){
-    for(var s=0;s<sels.length;s++){
-      var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
-      for(var i=0;i<ns.length;i++){
-        var n=ns[i];
-        if(!dvis(n))continue;
-        var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
-        if(!t||t.length>40)continue;
-        if(nodes.indexOf(n)<0)nodes.push(n);
+  function collectShopCatNodes(){
+    var list=[],docs2=xxDocs();
+    var sels=['.next-menu-item','[role="option"]','[role="menuitem"]','[class*="menu-item"]','[class*="option"]'];
+    for(var d=0;d<docs2.length;d++){
+      for(var s=0;s<sels.length;s++){
+        var ns;try{ns=docs2[d].querySelectorAll(sels[s]);}catch(e){continue;}
+        for(var i=0;i<ns.length;i++){
+          var n=ns[i];
+          if(!dvis(n))continue;
+          var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+          if(!t||t.length>40)continue;
+          if(list.indexOf(n)<0)list.push(n);
+        }
       }
     }
+    return list.filter(function(n){return !list.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
   }
-  nodes=nodes.filter(function(n){return !nodes.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
+  function boxOf(n){var b=null;try{b=n.querySelector('input[type="checkbox"],.next-checkbox,[role="checkbox"]');}catch(e){}return b;}
+  var nodes=collectShopCatNodes();
+  // 折叠分组（没有复选框的父标题）：点开一次再重读子分类
+  var expanded=0;
+  for(var ex=0;ex<nodes.length&&expanded<6;ex++){
+    if(boxOf(nodes[ex]))continue;
+    try{nodes[ex].click();expanded++;}catch(e){}
+  }
+  if(expanded){await wait(450);nodes=collectShopCatNodes();}
   var items=[],group='';
   for(var k=0;k<nodes.length;k++){
     var n=nodes[k],t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
@@ -2746,6 +2762,232 @@ function fillRequiredGapsScript(hints) {
   });
   await new Promise(function(r){setTimeout(r,300);});
   return JSON.stringify({filled:filled,gaps:gaps.slice(0,20)});
+})()`;
+}
+
+/**
+ * 省份必填兜底（[fill-province] / [presubmit-province]）：
+ *   1) 找发布页「* 省份」/「产地省份」控件；没有这个字段直接 skipped:true；
+ *   2) 已经有合法值（不是「请选择」）直接通过；
+ *   3) 打开下拉框，优先匹配采集/参数里的省份（支持下拉内搜索框）；
+ *   4) 拿不到省份，或者这个省份在下拉里不存在时，自动选择下拉框里的「其他」并回读校验。
+ */
+function buildEnsureProvinceScript(candidates) {
+  const list = JSON.stringify((Array.isArray(candidates) ? candidates : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 8));
+  return `(async function(){${NATIVE_SET}${DIALOG_HELPERS}
+  var wantList=${list};
+  function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  function vis(n){return dvis(n);}
+  function norm(s){return String(s||'').replace(/[:：*\\s\\u200b\\u00a0（）()【】\\[\\]]/g,'').replace(/(?:重要|推荐|热|新|必填)+$/,'');}
+  function coreProv(s){return norm(s).replace(/(?:壮族自治区|回族自治区|维吾尔自治区|特别行政区|自治区|省|市)$/,'');}
+  function isPlaceholder(s){var t=norm(s);return !t||/^(?:请选择|请选|选择|选择省份|省份|请输入)$/.test(t);}
+  function pt(el){
+    if(!el||!el.getBoundingClientRect)return null;
+    try{var r=el.getBoundingClientRect();if(!r||(!r.width&&!r.height))return null;return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};}catch(e){return null;}
+  }
+  function findProvinceField(){
+    var docs=xxDocs();
+    var sels='.sell-component-info-wrapper-label,[class*="info-wrapper-label"],label,.next-form-item-label,th,dt,span,div';
+    var best=null;
+    for(var d=0;d<docs.length;d++){
+      var ns;try{ns=docs[d].querySelectorAll(sels);}catch(e){continue;}
+      for(var i=0;i<ns.length;i++){
+        var n=ns[i];
+        if(n.children&&n.children.length>3)continue;
+        var t=norm(dtxt(n));
+        if(t!=='省份'&&t!=='产地省份'&&t!=='所在省份')continue;
+        var row=n.closest('[class*="info-wrapper-wrap"],.next-form-item,[class*="form-item"],[class*="formItem"],tr,li')||n.parentElement;
+        var box=n.closest('[class*="label-container"]')||n.parentElement;
+        var comp=(box&&box.nextElementSibling)||(row&&row.querySelector('[class*="component-wrap"],.next-form-item-control'))||row||box;
+        if(!comp)continue;
+        var hasCtrl=Boolean(comp.querySelector('select,.next-select,.next-cascader,[class*="select-trigger"],[role="combobox"],[class*="Select"],input'));
+        if(!hasCtrl&&row)comp=row;
+        if(vis(n)||vis(comp)){best={label:n,row:row,comp:comp};break;}
+        if(!best)best={label:n,row:row,comp:comp};
+      }
+      if(best&&(vis(best.label)||vis(best.comp)))break;
+    }
+    return best;
+  }
+  var field=findProvinceField();
+  if(!field)return JSON.stringify({ok:true,skipped:true,reason:'no-field'});
+  var comp=field.comp;
+  // 原生 <select>
+  var nativeSel=comp.querySelector&&comp.querySelector('select');
+  if(nativeSel){
+    var curOpt=nativeSel.options&&nativeSel.options[nativeSel.selectedIndex];
+    var curTxt=curOpt?String(curOpt.textContent||'').trim():String(nativeSel.value||'').trim();
+    if(!isPlaceholder(curTxt))return JSON.stringify({ok:true,already:true,picked:curTxt,via:'native-select'});
+    var nOpts=Array.prototype.slice.call(nativeSel.options||[]);
+    var pickedOpt=null,usedFallback=false;
+    for(var c=0;c<wantList.length&&!pickedOpt;c++){
+      var wc=coreProv(wantList[c]),wn=norm(wantList[c]);
+      pickedOpt=nOpts.find(function(o){return norm(o.textContent)===wn;})
+        ||nOpts.find(function(o){var oc=coreProv(o.textContent);return wc&&oc&&oc===wc;})
+        ||nOpts.find(function(o){var oc=coreProv(o.textContent);return wc.length>=2&&oc&&(oc.indexOf(wc)>=0||wc.indexOf(oc)>=0);})||null;
+    }
+    if(!pickedOpt){
+      pickedOpt=nOpts.find(function(o){var t=norm(o.textContent);return t==='其他'||t==='其它';})||null;
+      usedFallback=Boolean(pickedOpt);
+    }
+    if(!pickedOpt)return JSON.stringify({ok:false,reason:'no-option',via:'native-select'});
+    nativeSel.value=pickedOpt.value;
+    nativeSel.dispatchEvent(new Event('change',{bubbles:true}));
+    return JSON.stringify({ok:true,picked:String(pickedOpt.textContent||'').trim(),usedFallback:usedFallback,via:'native-select'});
+  }
+  // Fusion / Next Select / Combobox
+  var trig=(comp.querySelector&&comp.querySelector('.next-select,.next-cascader,[class*="select-trigger"],[role="combobox"],[class*="Select"]'))||comp;
+  function readVal(){
+    if(!trig)return '';
+    var valNode=trig.querySelector&&trig.querySelector('.next-select-values .next-select-value,.next-select-values,.next-select-inner,[class*="select-value"]');
+    var t=valNode?dtxt(valNode):'';
+    if(!t){
+      var inp=trig.querySelector&&trig.querySelector('input:not([type=hidden])');
+      if(inp&&String(inp.value||'').trim())t=String(inp.value).trim();
+    }
+    if(!t)t=dtxt(trig);
+    return String(t||'').replace(/\\s+/g,' ').trim();
+  }
+  var initialVal=readVal();
+  if(!isPlaceholder(initialVal)){
+    return JSON.stringify({ok:true,already:true,picked:initialVal,via:'existing'});
+  }
+  function setSearchText(el,v){
+    if(!el)return;
+    try{
+      var desc=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+      if(desc&&desc.set)desc.set.call(el,v);else el.value=v;
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+    }catch(e){}
+  }
+  function findOverlays(requireOpts){
+    var docs=xxDocs(),out=[];
+    var sels=['.next-overlay-wrapper.opened .next-overlay-inner','.next-overlay-wrapper.opened .next-menu','.next-select-popup-wrap','.next-overlay-inner','.next-menu-wrapper','[role="listbox"]','[class*="overlay-inner"]','[class*="dropdown-menu"]'];
+    for(var d=0;d<docs.length;d++){
+      for(var s=0;s<sels.length;s++){
+        var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
+        for(var i=0;i<ns.length;i++){
+          if(!vis(ns[i])||out.indexOf(ns[i])>=0)continue;
+          if(requireOpts&&!ns[i].querySelector('.next-menu-item,[role="option"],li,[class*="option"]'))continue;
+          out.push(ns[i]);
+        }
+      }
+    }
+    return out;
+  }
+  function collectOpts(overlays){
+    var out=[],seen=[];
+    for(var o=0;o<overlays.length;o++){
+      var ns;try{ns=overlays[o].querySelectorAll('.next-menu-item,[role="option"],li,[class*="option"]');}catch(e){continue;}
+      for(var i=0;i<ns.length;i++){
+        var n=ns[i];
+        if(!vis(n))continue;
+        if(n.querySelector&&n.querySelector('input'))continue;
+        var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+        var nt=norm(t);
+        if(!nt||nt.length>30||/^(?:请选择|请输入|搜索|无匹配|暂无数据|加载中)$/.test(nt))continue;
+        if(seen.indexOf(n)<0){seen.push(n);out.push({el:n,text:t,norm:nt,core:coreProv(t)});}
+      }
+    }
+    return out;
+  }
+  function matchOpts(opts,targets){
+    for(var c=0;c<targets.length;c++){
+      var wn=norm(targets[c]),wc=coreProv(targets[c]);
+      if(!wn)continue;
+      var hit=opts.find(function(o){return o.norm===wn;})
+        ||opts.find(function(o){return wc&&o.core&&o.core===wc;})
+        ||opts.find(function(o){return wc.length>=2&&o.core&&(o.core.indexOf(wc)===0||wc.indexOf(o.core)===0)&&o.core.length<=wc.length+6;});
+      if(hit)return hit;
+    }
+    return null;
+  }
+  var fireEl=(trig.querySelector&&trig.querySelector('.next-select-trigger,.next-select-inner,.next-select-arrow,input'))||trig;
+  var triggerPoint=pt(fireEl)||pt(trig);
+  var overlays=findOverlays(true);
+  if(!overlays.length||!collectOpts(overlays).length){
+    try{
+      var ev={bubbles:true,cancelable:true,view:window};
+      fireEl.dispatchEvent(new PointerEvent('pointerdown',ev));
+      fireEl.dispatchEvent(new MouseEvent('mousedown',ev));
+      fireEl.dispatchEvent(new PointerEvent('pointerup',ev));
+      fireEl.dispatchEvent(new MouseEvent('mouseup',ev));
+      fireEl.click();
+    }catch(e){}
+    await wait(400);
+    overlays=findOverlays(true);
+    if(!overlays.length&&fireEl!==trig){
+      try{trig.click();}catch(e){}
+      await wait(350);
+      overlays=findOverlays(true);
+    }
+  }
+  if(!overlays.length){
+    return JSON.stringify({ok:false,reason:'no-overlay',point:triggerPoint});
+  }
+  var opts=collectOpts(overlays);
+  var searchInp=null;
+  for(var oi=0;oi<overlays.length&&!searchInp;oi++){
+    try{
+      var cand=overlays[oi].querySelector('input:not([type=hidden]):not([readonly]):not([disabled])');
+      if(cand&&vis(cand))searchInp=cand;
+    }catch(e){}
+  }
+  var hit=wantList.length?matchOpts(opts,wantList):null;
+  if(!hit&&wantList.length&&searchInp){
+    var qText=coreProv(wantList[0])||wantList[0];
+    setSearchText(searchInp,qText);
+    await wait(300);
+    overlays=findOverlays(false);
+    opts=collectOpts(overlays);
+    hit=matchOpts(opts,wantList);
+    if(!hit){
+      setSearchText(searchInp,'');
+      await wait(300);
+      overlays=findOverlays(false);
+      opts=collectOpts(overlays);
+    }
+  }
+  var usedFallback=false;
+  if(!hit){
+    hit=opts.find(function(o){return o.norm==='其他'||o.norm==='其它';})||null;
+    if(!hit&&searchInp){
+      setSearchText(searchInp,'其他');
+      await wait(300);
+      overlays=findOverlays(false);
+      opts=collectOpts(overlays);
+      hit=opts.find(function(o){return o.norm==='其他'||o.norm==='其它';})||null;
+    }
+    usedFallback=Boolean(hit);
+  }
+  if(!hit){
+    try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
+    return JSON.stringify({ok:false,reason:'no-other-option',point:triggerPoint,available:opts.slice(0,10).map(function(o){return o.text;})});
+  }
+  try{if(hit.el.scrollIntoView)hit.el.scrollIntoView({block:'nearest'});}catch(e){}
+  var optPoint=pt(hit.el);
+  try{
+    var oev={bubbles:true,cancelable:true,view:window};
+    hit.el.dispatchEvent(new MouseEvent('mousedown',oev));
+    hit.el.dispatchEvent(new MouseEvent('mouseup',oev));
+    hit.el.click();
+  }catch(e){}
+  await wait(350);
+  var after=readVal();
+  // 如果下拉没自动关，发 Escape 收起（注意别把「其他」当成未选）
+  try{if(findOverlays(true).length)document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
+  var ok=!isPlaceholder(after);
+  return JSON.stringify({
+    ok:ok,
+    picked:ok?after:'',
+    target:hit.text,
+    usedFallback:usedFallback,
+    hadCandidates:wantList.length>0,
+    point:triggerPoint,
+    optionPoint:optPoint,
+    reason:ok?'':'readback-empty'
+  });
 })()`;
 }
 
@@ -4544,9 +4786,11 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     for (const a of (Array.isArray(draft?.attrs) ? draft.attrs : [])) push(a?.name, a?.value);
     for (const a of (Array.isArray(detail?.attributes) ? detail.attributes : [])) push(a?.name, a?.value);
     const get = name => (rows.find(r => r.name === name) || {}).value || '';
+    const PROVINCE_RE = /(北京|天津|上海|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|广西|西藏|宁夏|新疆|香港|澳门)(?:省|市|壮族自治区|回族自治区|维吾尔自治区|自治区|特别行政区)?/;
     const origin = get('产地') || get('省份') || '';
-    // 产地「中国大陆」→ 省份；「内蒙古自治区呼和浩特市」→ 省份 + 城市
-    const province = get('省份') || (/(省|自治区|市)/.test(origin) ? origin.slice(0, 12) : '');
+    // 产地「中国大陆」→ 无明确省份；「中国大陆/福建省/泉州市」→ 福建省；「内蒙古自治区呼和浩特市」→ 内蒙古自治区
+    const matchedProv = (origin.match(PROVINCE_RE) || [])[0] || '';
+    const province = get('省份') || matchedProv;
     if (province) { push('省份', province); push('产地省份', province); }
     const city = get('城市');
     if (city) push('城市', city);
@@ -5806,6 +6050,62 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
   }
 
   /**
+   * 从草稿/详情/必填提议中提取候选省份（不含「中国大陆」这类国家地区）。
+   */
+  function provinceCandidatesFor(draft, detail, hints) {
+    const PROVINCE_RE = /(北京|天津|上海|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|广西|西藏|宁夏|新疆|香港|澳门)(?:省|市|壮族自治区|回族自治区|维吾尔自治区|自治区|特别行政区)?/;
+    const pool = [
+      ...(Array.isArray(draft?.attrs) ? draft.attrs : []),
+      ...(Array.isArray(detail?.attributes) ? detail.attributes : []),
+      ...(Array.isArray(detail?.listing?.attributes) ? detail.listing.attributes : []),
+      ...(Array.isArray(detail?.snapshot?.attributes) ? detail.snapshot.attributes : []),
+      ...(Array.isArray(hints) ? hints : []),
+    ];
+    const out = [];
+    const add = v => {
+      const s = String(v || '').trim();
+      if (!s || /^(?:请选择|无|空|中国大陆|中国)$/.test(s) || out.includes(s)) return;
+      out.push(s);
+    };
+    for (const a of pool) {
+      const n = String(a?.name || '').replace(/[:：*\s]/g, '');
+      if (/^(?:省份|产地省份|所在省份)$/.test(n)) {
+        add(a?.value);
+        const m = String(a?.value || '').match(PROVINCE_RE);
+        if (m && m[0]) add(m[0]);
+      }
+    }
+    for (const a of pool) {
+      const n = String(a?.name || '').replace(/[:：*\s]/g, '');
+      if (/^(?:产地|原产地|原料产地|发货地)$/.test(n)) {
+        const m = String(a?.value || '').match(PROVINCE_RE);
+        if (m && m[0]) add(m[0]);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 省份下拉（* 省份）：优先选匹配省份；获取不到省份或下拉里没有该省份时，选择下拉框里的「其他」。
+   * DOM 点击打不开/选不中时，退到 CDP 真实鼠标点坐标再重试一次。
+   */
+  async function ensureProvince(win, candidates = []) {
+    let res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
+    if (res && !res.ok && !res.skipped) {
+      if (res.reason === 'no-overlay' && res.point && Number.isFinite(Number(res.point.x))) {
+        await cdpXY(win, Number(res.point.x), Number(res.point.y));
+        await sleep(450);
+        res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 12000));
+      } else if (res.reason === 'readback-empty' && res.optionPoint && Number.isFinite(Number(res.optionPoint.x))) {
+        await cdpXY(win, Number(res.optionPoint.x), Number(res.optionPoint.y));
+        await sleep(350);
+        res = asJson(await evalJs(win, buildEnsureProvinceScript(candidates), 10000));
+      }
+    }
+    return res || { ok: false, reason: 'eval-failed' };
+  }
+
+  /**
    * 透明素材图（导购素材 · 800×800，必填）：
    * 用第一张 1:1 主图做**真抠图**（背景透明化）→ 800×800 PNG → 压到 500K 以内，再走素材中心上传。
    * 草稿指定了本机图（transSource=local）就优先用那张。
@@ -6772,6 +7072,16 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       } else {
         emit('[fill-attrs] 草稿里没有参数，跳过');
       }
+      const provinceCandidates = provinceCandidatesFor(draft, detail, input.hints);
+      {
+        const pv = await ensureProvince(win, provinceCandidates);
+        if (!pv?.skipped) {
+          if (pv?.ok && pv.already) emit(`[fill-province] 省份：页面已选「${pv.picked}」`);
+          else if (pv?.ok && pv.usedFallback) emit(`[fill-province] 省份：${provinceCandidates.length ? `未匹配到「${provinceCandidates[0]}」` : '采集参数无省份'}，已选择下拉框「${pv.picked || '其他'}」`);
+          else if (pv?.ok) emit(`[fill-province] 省份：已选择「${pv.picked}」`);
+          else emit(`[fill-province] ⚠ 省份未选上（${pv?.reason || 'unknown'}），提交前会再补选`);
+        }
+      }
 
       step('填写保质期');
       // ④ 保质期：按采集值填「数字 + 单位」。通用填充只写数字，单位会停在「请选择单位」，
@@ -7250,6 +7560,16 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
 
       step('提交前自检');
       // ⑩ 提交前自检：把真正拦路项列成人话并就地补救，不再让静态提示冒充失败原因
+      // [presubmit-province] 提交前再核对一次 * 省份（防止重渲染被清空或未触发）：无省份/无匹配时选「其他」
+      {
+        const pv2 = await ensureProvince(win, provinceCandidates);
+        if (!pv2?.skipped && !pv2?.already) {
+          emit(pv2?.ok
+            ? `[presubmit-province] 省份已补选「${pv2.picked || '其他'}」${pv2.usedFallback ? '（下拉兜底）' : ''}`
+            : `[presubmit-province] ⚠ 省份仍未选中（${pv2?.reason || 'unknown'}）`);
+          await sleep(300);
+        }
+      }
       // 先把可能被我们误开的「批量导入」弹窗关掉，否则它会压在页面上挡住提交（2026-11-17 现场）
       if (await closeBatchImportDialog(win)) emit('[presubmit] 已关闭残留的「批量导入」弹窗');
       let pre = asJson(await win.webContents.executeJavaScript(preSubmitCheckScript(imagePlan.tall.length), true).catch(() => null));
@@ -7684,5 +8004,6 @@ module.exports = {
     buildOpenSkuProductScript, buildFocusSkuProductSearchScript, buildSkuProductOptionsScript, buildPickSkuProductScript, buildCreateSkuProductScript, buildSaveCreateProductScript,
     buildDetailCountScript, buildClearDetailScript, buildOpenDetailSourceScript,
     buildFillDetailSourceScript, buildConfirmDetailImportScript, buildDetailReadbackScript,
+    buildEnsureProvinceScript,
   },
 };

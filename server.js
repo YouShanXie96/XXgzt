@@ -381,6 +381,14 @@ async function initWorkbench() {
   });
 
   const operations = createOperationsService(ctx);
+  ctx.currentOperatorName = () => {
+    try {
+      const user = cloudAuth?.currentOperator?.();
+      const name = String(user?.name || '').trim();
+      if (name) return name;
+    } catch {}
+    return '';
+  };
   const personalTaobaoService = createPersonalTaobaoService({ electron, emit, getWindow: () => mainWindow });
   ctx.probePersonalSource = async () => personalTaobaoService.loggedIn();
   insightServices = createInsightServices(ctx);

@@ -99,10 +99,12 @@ function createSuggestionEngine({ ctx } = {}) {
     }
 
     // 3) 产地 / 省份 / 城市
+    const PROVINCE_RE = /(北京|天津|上海|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|广西|西藏|宁夏|新疆|香港|澳门)(?:省|市|壮族自治区|回族自治区|维吾尔自治区|自治区|特别行政区)?/;
     const origin = get('产地', '原料产地', '原产地');
     if (origin) {
       push('产地', origin, '参数');
-      const province = get('省份') || (/(省|自治区|市)/.test(origin) ? origin : '');
+      const matchedProv = (origin.match(PROVINCE_RE) || [])[0] || '';
+      const province = get('省份') || matchedProv;
       if (province) push('省份', province, '参数');
     }
     if (get('城市')) push('城市', get('城市'), '参数');
