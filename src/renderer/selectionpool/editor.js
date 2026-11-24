@@ -169,7 +169,9 @@
     function installGuards() {
       if (window.__xxSpedGuardsInstalled) return;
       window.__xxSpedGuardsInstalled = true;
-      const SCROLLERS = '.sped-cols,.sped-sku-list,.sped-detail-grid,.sped-body-wrap,.spx-body,.spx-form-main,.sp-dialog-body,[data-sped-scroll]';
+      // 注意：.spx-log 必须排在 .spx-body 前面（closest 取最近的祖先），
+      // 否则鼠标在日志上滚动时会被当成「弹窗空白处」，滚轮被吃掉（用户 2026-11-24）。
+      const SCROLLERS = '.spx-log,[data-spx-log],.sped-cols,.sped-sku-list,.sped-detail-grid,.sped-body-wrap,.spx-body,.spx-form-main,.sp-dialog-body,[data-sped-scroll]';
       document.addEventListener('wheel', event => {
         const overlay = event.target.closest?.('.sped-scrim,.spx-backdrop,.sp-dialog-backdrop');
         if (!overlay) return;
@@ -889,7 +891,44 @@
           await run('editorPasteSkus', { text }, { mutate: () => { ui.pasteOpen = false; ui.pasteText = ''; } });
           return true;
         }
-        case 'sku-template': await run('editorSkuTemplate', {}, { success: '已插入宣传规格到最上面' }); return true;
+        case 'sku-template': {
+          // 用户 2026-11-21：必须先选模板，不再偷偷塞一套默认宣传语。
+          const templates = list(await api('selectionpool.imageTemplates', { kind: 'sku' }).catch(() => []));
+          const countOf = t => `${list(t.skus).length} 条规格${t.storeName ? ` · ${t.storeName}` : ''}`;
+          const options = templates.map((t, i) => `<label class="sped-tpl-item"><input type="radio" name="templateId" value="${esc(t.id)}" ${i === 0 ? 'checked' : ''}><span class="sped-tpl-main"><b>${esc(t.name || '未命名模板')}</b><em>${esc(countOf(t))}</em></span></label>`).join('');
+          const fields = `${templates.length
+            ? `<div class="sped-tpl-list">${options}<label class="sped-tpl-item"><input type="radio" name="templateId" value="__new__"><span class="sped-tpl-main"><b>＋ 把当前规格存为新模板</b><em>保存后在其它商品也能直接选</em></span></label></div>`
+            : '<p class="sped-note">还没有 SKU 模板。把当前规格存成第一个模板，下一次就能直接选。</p>'}
+            <div class="field"><label>新模板名称</label><input name="newName" placeholder="例如：食品通用宣传规格"></div>`;
+          const values = await modal({ title: '选择 SKU 模板', description: '选一个模板插到规格最上面；也可以把当前规格存成模板。', fields, confirm: '确定' });
+          if (!values) return true;
+          const wantsNew = values.templateId === '__new__' || (!values.templateId && String(values.newName || '').trim());
+          if (wantsNew) {
+            const name = String(values.newName || '').trim();
+            if (!name) { toast('请填写新模板名称', true); return true; }
+            const rows = skus().filter(s => !s.removed && String(s.name || '').trim()).map(s => ({
+              name: String(s.name || '').trim(), suffix: '', image: String(s.image || ''), price: String(s.price || ''), stock: String(s.stock || ''),
+            }));
+            if (!rows.length) { toast('当前还没有规格可存为模板', true); return true; }
+            const shop = list(d().shopStates?.loggedIn)[0] || list(d().shopStates?.stores)[0] || null;
+            const saved = await api('selectionpool.changeImageTemplate', {
+              action: 'create', kind: 'sku', name, storeId: shop?.storeId || '', storeName: shop?.name || '', images: [], skus: rows,
+            }).catch(error => ({ ok: false, message: String(error?.message || error) }));
+            if (saved?.ok === false) { toast(saved.message || '模板保存失败', true); return true; }
+            toast(`已保存 SKU 模板「${name}」`);
+            return true;
+          }
+          if (!values.templateId) { toast('请选择一个模板，或填写新模板名称', true); return true; }
+          const result = await api('selectionpool.editorSkuTemplate', { itemId: ui.itemId, templateId: Number(values.templateId) })
+            .catch(error => ({ ok: false, message: String(error?.message || error) }));
+          if (result?.ok) {
+            if (ui.data) ui.data.draft = result.draft;
+            ui.dirty = true;
+            toast(`已插入 ${result.added} 条宣传规格${result.templateName ? `（${result.templateName}）` : ''}`);
+            render();
+          } else toast(result?.message || '插入模板失败', true);
+          return true;
+        }
         case 'sku-clean': {
           const preview = await api('selectionpool.editorSkuMatch', { itemId: ui.itemId, action: 'preview' })
             .catch(error => ({ ok: false, message: String(error?.message || error) }));
@@ -973,8 +1012,35 @@
         case 'detail-remove': await run('editorDetail', { action: 'remove', index: Number(target.dataset.index) }); return true;
         case 'detail-restore': await run('editorDetail', { action: 'restore' }); return true;
         case 'detail-template': {
-          const values = await modal({ title: '详情页模板', description: '填入模板图片地址（每行一个），会插到详情页最前面；已在详情页里的图不重复插。', fields: '<div class="field"><label>图片地址</label><textarea name="images" rows="4" placeholder="https://…"></textarea></div>', confirm: '插入模板' });
-          if (values?.images) await run('editorDetail', { action: 'template', images: String(values.images).split(/[\r\n]+/).map(v => v.trim()).filter(Boolean) });
+          // 用户 2026-11-21：详情页模板也要「先添加模板，再插入时从已添加的模板里选」。
+          const templates = list(await api('selectionpool.imageTemplates', { kind: 'detail' }).catch(() => []));
+          const countOf = t => `${list(t.images).length} 张图${t.storeName ? ` · ${t.storeName}` : ''}`;
+          const options = templates.map((t, i) => `<label class="sped-tpl-item"><input type="radio" name="templateId" value="${esc(t.id)}" ${i === 0 ? 'checked' : ''}><span class="sped-tpl-main"><b>${esc(t.name || '未命名模板')}</b><em>${esc(countOf(t))}</em></span></label>`).join('');
+          const fields = `${templates.length
+            ? `<div class="sped-tpl-list">${options}<label class="sped-tpl-item"><input type="radio" name="templateId" value="__new__"><span class="sped-tpl-main"><b>＋ 把当前详情页存为新模板</b><em>保存当前 ${list(draft().detailImages).length} 张图</em></span></label></div>`
+            : '<p class="sped-note">还没有详情页模板。把当前详情图存成第一个模板，下一次就能直接选。</p>'}
+            <div class="field"><label>新模板名称</label><input name="newName" placeholder="例如：食品详情通用页"></div>`;
+          const values = await modal({ title: '选择详情页模板', description: '选一个模板插到详情页最前面；已在详情页里的图不会重复插。', fields, confirm: '确定' });
+          if (!values) return true;
+          const wantsNew = values.templateId === '__new__' || (!values.templateId && String(values.newName || '').trim());
+          if (wantsNew) {
+            const name = String(values.newName || '').trim();
+            if (!name) { toast('请填写新模板名称', true); return true; }
+            const images = list(draft().detailImages).map(u => String(u || '')).filter(Boolean);
+            if (!images.length) { toast('当前详情页还没有图可存为模板', true); return true; }
+            const shop = list(d().shopStates?.loggedIn)[0] || list(d().shopStates?.stores)[0] || null;
+            const saved = await api('selectionpool.changeImageTemplate', {
+              action: 'create', kind: 'detail', name, storeId: shop?.storeId || '', storeName: shop?.name || '', images, skus: [],
+            }).catch(error => ({ ok: false, message: String(error?.message || error) }));
+            if (saved?.ok === false) { toast(saved.message || '模板保存失败', true); return true; }
+            toast(`已保存详情页模板「${name}」`);
+            return true;
+          }
+          if (!values.templateId) { toast('请选择一个模板，或填写新模板名称', true); return true; }
+          const tpl = templates.find(t => String(t.id) === String(values.templateId));
+          const images = list(tpl?.images).map(u => String(u || '')).filter(Boolean);
+          if (!images.length) { toast('这个模板里没有图片', true); return true; }
+          await run('editorDetail', { action: 'template', images });
           return true;
         }
         // ---- 参数 ----

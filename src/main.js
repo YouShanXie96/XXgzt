@@ -317,6 +317,16 @@ async function start(){
     },
   });
   const operations=createOperationsService(ctx);
+  // 上架记录 / 执行日志显示「谁做的」：优先当前登录的工作台账号显示名，
+  // 没有登录中心会话时退到 Windows 登录账号（用户 2026-11-21：不要显示「本机」）。
+  ctx.currentOperatorName=()=>{
+    try{
+      const user=cloudAuth?.currentOperator?.();
+      const name=String(user?.name||'').trim();
+      if(name)return name;
+    }catch{}
+    return '';
+  };
   // 个人淘宝号：先于上品库创建，登录态检查挂 ctx.probePersonalSource（上品库读类目时预检查，
   // 未登录直接引导登录，不空跑五次探测）。
   const personalTaobaoService=createPersonalTaobaoService({electron,emit,getWindow:()=>mainWindow});

@@ -2009,6 +2009,261 @@ function fillShelfLifeScript(value) {
 })()`;
 }
 
+/* ------------------------------------------------------------------
+ * 店铺中分类（卖家自定义分类，用户 2026-11-21 明确）
+ *
+ * 「店铺分类」不是平台类目树，而是卖家后台 →「店铺中分类」里自己建的分类
+ * （截图：爆单品 / 心想事成 / 多金多金 → 多金T、多金Q …），发布页上是一个
+ * 「选择分类」下拉，选项带复选框，可多选。
+ * 这里只做三件事：定位字段并打开下拉、按保存的名字勾选、回读已选。
+ * 找不到字段就明确报 no-field，绝不按类目树猜。
+ * ------------------------------------------------------------------ */
+function openShopCategoryScript() {
+  return `(function(){${NATIVE_SET}${DIALOG_HELPERS}
+  function norm(t){return String(t||'').replace(/[\\s\\u200b\\u00a0:：*]/g,'');}
+  function findLabel(){
+    var nodes=xxAll('label,span,div,th,dt');
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i];
+      if(!dvis(n))continue;
+      var t=norm(dtxt(n));
+      if(t==='店铺中分类'||t==='店铺分类')return n;
+    }
+    return null;
+  }
+  function rowOf(label){
+    return label.closest('[class*="info-wrapper-wrap"],[class*="form-item"],[class*="formItem"],tr,li,section')||label.parentElement;
+  }
+  function triggerIn(row){
+    var cands=[];
+    try{cands=Array.prototype.slice.call(row.querySelectorAll('[class*="select"],[role="combobox"],input[readonly],[class*="trigger"]'));}catch(e){}
+    cands=cands.filter(dvis);
+    return cands.find(function(n){return /选择分类|请选择/.test(dtxt(n)||String(n.placeholder||''));})||cands[0]||null;
+  }
+  // 下拉已经开着就不要再点（再点会把它关掉，第二次勾选就全落空）
+  function menuOpen(){
+    var docs=xxDocs();
+    for(var d=0;d<docs.length;d++){
+      var ns;
+      try{ns=docs[d].querySelectorAll('.next-menu-item,[role="option"],[class*="menu-item"]');}catch(e){continue;}
+      for(var i=0;i<ns.length;i++){ if(dvis(ns[i])) return true; }
+    }
+    return false;
+  }
+  var label=findLabel();
+  if(!label)return JSON.stringify({ok:false,reason:'no-field'});
+  var row=rowOf(label);
+  if(!row)return JSON.stringify({ok:false,reason:'no-row'});
+  var trigger=triggerIn(row);
+  if(!trigger)return JSON.stringify({ok:false,reason:'no-trigger',rowText:dtxt(row).slice(0,80)});
+  var r=null;try{r=trigger.getBoundingClientRect();}catch(e){}
+  var point=r?{x:r.left+r.width/2,y:r.top+r.height/2}:null;
+  if(menuOpen())return JSON.stringify({ok:true,reason:'already-open',
+    rowText:dtxt(row).slice(0,100),
+    current:String(dtxt(trigger)||'').replace(/^选择分类$/,'').slice(0,160),
+    point:point});
+  try{
+    var o={bubbles:true,cancelable:true,view:window};
+    trigger.dispatchEvent(new PointerEvent('pointerdown',o));
+    trigger.dispatchEvent(new MouseEvent('mousedown',o));
+    trigger.dispatchEvent(new PointerEvent('pointerup',o));
+    trigger.dispatchEvent(new MouseEvent('mouseup',o));
+    trigger.click();
+  }catch(e){}
+  return JSON.stringify({ok:true,reason:'',
+    rowText:dtxt(row).slice(0,100),
+    current:String(dtxt(trigger)||'').replace(/^选择分类$/,'').slice(0,160),
+    point:point});
+})()`;
+}
+
+function readShopCategoryScript() {
+  return `(function(){${NATIVE_SET}${DIALOG_HELPERS}
+  function norm(t){return String(t||'').replace(/[\\s\\u200b\\u00a0:：*]/g,'');}
+  function findLabel(){
+    var nodes=xxAll('label,span,div,th,dt');
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i];
+      if(!dvis(n))continue;
+      var t=norm(dtxt(n));
+      if(t==='店铺中分类'||t==='店铺分类')return n;
+    }
+    return null;
+  }
+  var label=findLabel();
+  if(!label)return JSON.stringify({ok:false,reason:'no-field'});
+  var row=label.closest('[class*="info-wrapper-wrap"],[class*="form-item"],[class*="formItem"],tr,li,section')||label.parentElement;
+  if(!row)return JSON.stringify({ok:false,reason:'no-row'});
+  var tags=[];
+  try{
+    Array.prototype.slice.call(row.querySelectorAll('[class*="tag"],[class*="Tag"],[class*="chip"],[class*="selected"]')).forEach(function(n){
+      if(!dvis(n))return;
+      var t=String(dtxt(n)||'').trim();
+      if(t&&t.length<=30&&!(/选择分类/.test(t))&&tags.indexOf(t)<0)tags.push(t);
+    });
+  }catch(e){}
+  var trig=null;
+  try{trig=Array.prototype.slice.call(row.querySelectorAll('[class*="select"],[role="combobox"]')).filter(dvis)[0]||null;}catch(e){}
+  var text=String(dtxt(trig)||'').replace(/^选择分类$/,'').trim();
+  return JSON.stringify({ok:true,selected:tags,text:text.slice(0,160)});
+})()`;
+
+}
+
+/** 勾选保存的店铺中分类（按名字精确/包含匹配；只点复选框，不点分组标题）。 */
+function pickShopCategoryScript(names) {
+  const list = JSON.stringify((Array.isArray(names) ? names : []).map(v => String(v || '')).filter(Boolean));
+  return `(function(){${NATIVE_SET}${DIALOG_HELPERS}
+  var wants=${list};
+  function norm(t){return String(t||'').replace(/[\\s\\u200b\\u00a0:：*]/g,'');}
+  function boxOf(n){
+    var box=null;
+    try{box=n.querySelector('input[type="checkbox"],.next-checkbox,[role="checkbox"]');}catch(e){}
+    return box;
+  }
+  function pickable(){
+    var out=[],docs=xxDocs();
+    var sels=['.next-menu-item','[role="option"]','[role="menuitem"]','[class*="menu-item"]','[class*="option"]','label'];
+    for(var d=0;d<docs.length;d++){
+      for(var s=0;s<sels.length;s++){
+        var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
+        for(var i=0;i<ns.length;i++){
+          var n=ns[i];
+          if(!dvis(n))continue;
+          if(!boxOf(n))continue;
+          var t=norm(dtxt(n));
+          if(!t||t.length>60)continue;
+          if(out.indexOf(n)<0)out.push(n);
+        }
+      }
+    }
+    return out.filter(function(n){return !out.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
+  }
+  function checked(n){
+    var b=boxOf(n);
+    if(b&&b.tagName==='INPUT')return Boolean(b.checked);
+    if(b){var aria=String(b.getAttribute('aria-checked')||'');if(aria)return aria==='true';
+      var cls=String(b.className||'');if(/checked/.test(cls)&&!/unchecked/.test(cls))return true;}
+    return false;
+  }
+  var boxes=pickable();
+  var picked=[],missing=[];
+  for(var w=0;w<wants.length;w++){
+    var key=norm(wants[w]);
+    if(!key)continue;
+    var hit=null;
+    for(var i=0;i<boxes.length;i++){
+      var t=norm(dtxt(boxes[i]));
+      if(t===key){hit=boxes[i];break;}
+      if(!hit&&t.indexOf(key)>=0&&t.length<=key.length+8)hit=boxes[i];
+    }
+    if(!hit){missing.push(wants[w]);continue;}
+    if(checked(hit)){picked.push(wants[w]);continue;}
+    try{
+      var b=boxOf(hit);
+      // 优先点平台自己的复选框容器（Next 的 .next-checkbox 才有 React 事件），
+      // 直接点隐藏 input 有时只改 DOM 不改组件状态。
+      var target=(b&&b.closest&&b.closest('.next-checkbox,[class*="checkbox"]'))||b||hit;
+      var o={bubbles:true,cancelable:true,view:window};
+      target.dispatchEvent(new MouseEvent('mousedown',o));
+      target.dispatchEvent(new MouseEvent('mouseup',o));
+      target.click();
+    }catch(e){}
+    picked.push(wants[w]);
+  }
+  // 分组是折叠的（截图里「多金多金 / 财多财多」带箭头）：目标名字还在 missing 里，
+  // 就把分组点开，下一次 pick 才能看到子分类。最多展开 4 个，避免乱点。
+  var expanded=0;
+  if(missing.length){
+    var groups=[],docs=xxDocs();
+    var gsels=['.next-menu-item','[class*="menu-item"]','[class*="menu-group"]','[role="treeitem"]'];
+    for(var d2=0;d2<docs.length;d2++){
+      for(var s2=0;s2<gsels.length;s2++){
+        var ns2;try{ns2=docs[d2].querySelectorAll(gsels[s2]);}catch(e){continue;}
+        for(var i2=0;i2<ns2.length;i2++){ if(dvis(ns2[i2])&&groups.indexOf(ns2[i2])<0)groups.push(ns2[i2]); }
+      }
+    }
+    for(var g=0;g<groups.length&&expanded<4;g++){
+      var gnode=groups[g];
+      if(boxOf(gnode))continue;               // 有复选框的是分类本身，不是分组
+      var gtext=norm(dtxt(gnode));
+      if(!gtext||gtext.length>30)continue;
+      var related=missing.some(function(m){var k=norm(m);return k.indexOf(gtext)===0&&k!==gtext;});
+      if(!related)continue;
+      try{ gnode.click(); expanded++; }catch(e){}
+    }
+  }
+  return JSON.stringify({ok:picked.length>0,found:boxes.length,picked:picked,missing:missing,expanded:expanded,
+    all:boxes.map(function(n){return String(dtxt(n)||'').replace(/\\s+/g,' ').trim().slice(0,40);}).filter(Boolean).slice(0,200),
+    sample:boxes.slice(0,12).map(function(n){return norm(dtxt(n)).slice(0,20);})});
+})()`;
+}
+
+/**
+ * 读取本店「店铺中分类」的全部选项（设置页「刷新」用）：
+ * 打开下拉 → 读可见选项（分组标题 + 带复选框的分类名）→ 关下拉。
+ * 页面没渲染出这个字段时返回 no-field，由调用方提示「请在店铺发布页确认」。
+ */
+function readShopCategoryOptionsScript() {
+  return `(async function(){${NATIVE_SET}${DIALOG_HELPERS}
+  function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  function norm(t){return String(t||'').replace(/[\\s\\u200b\\u00a0:：*]/g,'');}
+  function findLabel(){
+    var nodes=xxAll('label,span,div,th,dt');
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i];
+      if(!dvis(n))continue;
+      var t=norm(dtxt(n));
+      if(t==='店铺中分类'||t==='店铺分类')return n;
+    }
+    return null;
+  }
+  var label=findLabel();
+  if(!label)return JSON.stringify({ok:false,reason:'no-field'});
+  var row=label.closest('[class*="info-wrapper-wrap"],[class*="form-item"],[class*="formItem"],tr,li,section')||label.parentElement;
+  var trigger=null;
+  try{trigger=Array.prototype.slice.call(row.querySelectorAll('[class*="select"],[role="combobox"],input[readonly]')).filter(dvis)[0]||null;}catch(e){}
+  if(!trigger)return JSON.stringify({ok:false,reason:'no-trigger'});
+  try{
+    var o={bubbles:true,cancelable:true,view:window};
+    trigger.dispatchEvent(new PointerEvent('pointerdown',o));
+    trigger.dispatchEvent(new MouseEvent('mousedown',o));
+    trigger.dispatchEvent(new PointerEvent('pointerup',o));
+    trigger.dispatchEvent(new MouseEvent('mouseup',o));
+    trigger.click();
+  }catch(e){}
+  await wait(900);
+  function boxOf(n){var b=null;try{b=n.querySelector('input[type="checkbox"],.next-checkbox,[role="checkbox"]');}catch(e){}return b;}
+  var nodes=[],docs=xxDocs();
+  var sels=['.next-menu-item','[role="option"]','[role="menuitem"]','[class*="menu-item"]','[class*="option"]'];
+  for(var d=0;d<docs.length;d++){
+    for(var s=0;s<sels.length;s++){
+      var ns;try{ns=docs[d].querySelectorAll(sels[s]);}catch(e){continue;}
+      for(var i=0;i<ns.length;i++){
+        var n=ns[i];
+        if(!dvis(n))continue;
+        var t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+        if(!t||t.length>40)continue;
+        if(nodes.indexOf(n)<0)nodes.push(n);
+      }
+    }
+  }
+  nodes=nodes.filter(function(n){return !nodes.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
+  var items=[],group='';
+  for(var k=0;k<nodes.length;k++){
+    var n=nodes[k],t=String(dtxt(n)||'').replace(/\\s+/g,' ').trim();
+    var hasBox=Boolean(boxOf(n));
+    if(!hasBox){group=t;continue;}
+    items.push({name:t,group:group,path:group?group+' / '+t:t});
+  }
+  // 关下拉：Escape + 点空白，避免遮住后面的字段
+  try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true}));}catch(e){}
+  try{if(document.body)document.body.click();}catch(e){}
+  return JSON.stringify({ok:items.length>0,items:items.slice(0,200),
+    reason:items.length?'':'empty',triggerText:String(dtxt(trigger)||'').slice(0,60)});
+})()`;
+}
+
 /* ---- 规格抽屉：打开 / 聚焦值输入 / 确认（值本身用 CDP 真实键盘输入，React 才提交） ---- */
 function openSpecDrawerScript() {
   return `(async function(){${NATIVE_SET}
@@ -4159,10 +4414,121 @@ function buildCreateSkuProductScript(fact, phase) {
 })()`;
 }
 
+/**
+ * 发布页 JS 弹窗守卫（2026-11-21）。
+ * 平台在素材中心/提交时会用 alert/confirm 问「图片已被使用，是否继续」这类问题；
+ * Electron 里这种原生 JS 弹窗会**阻塞渲染进程**，此时任何 executeJavaScript 都不返回，
+ * 表现就是「上架卡在这一步，时间一直走、日志不动」。
+ * 这里把三个弹窗函数换成自动确认 + 记录文本，由 drainPageDialogs 写进执行日志。
+ */
+const PAGE_DIALOG_GUARD_SCRIPT = `(function(){
+  try{
+    if(window.__XX_DIALOG_GUARD__)return 'exists';
+    window.__XX_DIALOG_GUARD__=1;
+    window.__XX_DIALOGS__=[];
+    function note(kind,text){
+      try{window.__XX_DIALOGS__.push({kind:kind,text:String(text==null?'':text).slice(0,200),at:Date.now()});}catch(e){}
+      try{window.__XX_DIALOGS__=window.__XX_DIALOGS__.slice(-20);}catch(e){}
+    }
+    window.alert=function(m){note('alert',m);};
+    window.confirm=function(m){note('confirm',m);return true;};
+    window.prompt=function(m,d){note('prompt',m);return d==null?'':String(d);};
+    return 'installed';
+  }catch(e){return 'failed';}
+})()`;
+
 function createPublishDriver({ electron, partitionForStore, log, pictureSpace, dataDir } = {}) {
   const { BrowserWindow } = electron;
   let activeLog = null;
   const emit = message => { try { (typeof activeLog === 'function' ? activeLog : log)?.(String(message)); } catch { /* */ } };
+
+  /* ------------------------------------------------------------------
+   * 手动停止 / 步骤标记 / 脚本超时（用户 2026-11-21 现场反馈）
+   *
+   * 1)「正在上架的产品没有办法停止」：以前停止只置一个 stopRequested，执行循环要等
+   *    driver.publish 自己跑完才看得到。现在 cancel() 直接销毁发布窗口，
+   *    挂在页面上的 executeJavaScript 立刻失败，当前这件商品当场中断。
+   * 2)「上架卡在素材中心不动」：页面被平台弹窗（alert/confirm）或重渲染卡住时，
+   *    executeJavaScript 是**永不返回**的。evalJs 给每次调用加超时，
+   *    step() 记录最后一步，配合服务端看门狗给出可读原因，而不是无限等待。
+   * ------------------------------------------------------------------ */
+  let activePublishWindow = null;
+  let activeStep = '';
+  let cancelState = { stopped: false, reason: '' };
+
+  function cancel(reason = '已手动停止') {
+    cancelState.stopped = true;
+    cancelState.reason = String(reason || '已手动停止');
+    const win = activePublishWindow;
+    activePublishWindow = null;
+    if (win && !win.isDestroyed?.()) {
+      try { win.destroy(); } catch { /* 窗口可能已在关闭中 */ }
+      return { ok: true, aborted: true, step: activeStep };
+    }
+    return { ok: true, aborted: false, step: activeStep };
+  }
+
+  const currentStep = () => activeStep;
+
+  function checkCancel() {
+    if (cancelState.stopped) throw Object.assign(new Error(cancelState.reason || '已停止上架'), { code: 'STOPPED' });
+  }
+
+  /** 带超时的页面脚本：页面被弹窗/重渲染卡住时按失败处理，绝不让整件商品无限等。 */
+  let lastScriptTimeoutNoteAt = 0;
+  async function evalJs(win, script, timeoutMs = 15000) {
+    if (!win || win.isDestroyed?.()) return null;
+    const limit = Math.max(1000, Number(timeoutMs) || 15000);
+    const run = Promise.resolve()
+      .then(() => win.webContents.executeJavaScript(script, true))
+      .catch(() => null);
+    const value = await Promise.race([run, sleep(limit).then(() => '__xx_timeout__')]);
+    if (value === '__xx_timeout__') {
+      // 同一段卡顿会连续触发多次（很多调用点都在等同一个卡住的页面），20 秒内只记一行
+      if (Date.now() - lastScriptTimeoutNoteAt > 20000) {
+        lastScriptTimeoutNoteAt = Date.now();
+        emit(`[guard] 页面脚本 ${Math.round(limit / 1000)} 秒没有响应（平台弹窗或页面卡住），这一步按失败处理`);
+      }
+      return null;
+    }
+    return value;
+  }
+
+  /** 页面还活着吗：正常时 1+1 立刻返回；平台卡死时 3 秒读不到。 */
+  async function pageAlive(win) {
+    const value = await evalJs(win, '1+1', 3000);
+    return Number(value) === 2;
+  }
+
+  /**
+   * 图片/提交这类重步骤开跑前先确认页面没卡死（用户 2026-11-24 现场：
+   * 素材中心点一下卡片后整个发布页无响应，队列白等 3 分钟）。
+   * 连续两次 ping 不通就直接抛 PAGE_HUNG，让这件商品快速失败，不拖死整批。
+   */
+  async function assertPageAlive(win, where) {
+    if (await pageAlive(win)) return true;
+    await sleep(800);
+    if (await pageAlive(win)) return true;
+    throw Object.assign(
+      new Error(`平台页面无响应${where ? `（${where}）` : ''}：已停止这件商品，避免整批卡住；可直接重新上架或人工处理`),
+      { code: 'PAGE_HUNG' },
+    );
+  }
+
+  /** 页面里被自动确认掉的 alert/confirm：读出来写进日志，别让平台提示悄悄消失。 */
+  async function drainPageDialogs(win) {
+    const raw = await evalJs(win, `(function(){
+      var list=(window.__XX_DIALOGS__||[]).slice();
+      window.__XX_DIALOGS__=[];
+      return JSON.stringify(list.slice(0,5));
+    })()`, 6000);
+    let list = [];
+    try { list = JSON.parse(raw || '[]'); } catch { list = []; }
+    for (const row of (Array.isArray(list) ? list : []).slice(0, 3)) {
+      emit(`[dialog] 平台弹窗「${String(row?.text || '').slice(0, 120)}」已自动确认（${row?.kind || 'alert'}），不会卡住队列`);
+    }
+    return list;
+  }
 
   /**
    * 必填兜底用的「名值表」：草稿参数 + 由参数推导出来的常见必填项。
@@ -4841,7 +5207,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
 
   /** 用真实鼠标把素材中心点开（老软件 realClickAt 同款；多个候选依次试）。 */
   async function openMediaDrawer(win, group, maxPoints = 5) {
-    const raw = asJson(await win.webContents.executeJavaScript(buildImageEntryPointsScript(group), true).catch(() => null));
+    const raw = asJson(await evalJs(win, buildImageEntryPointsScript(group), 12000));
     if (!raw?.ok) return { ok: false, reason: 'no-entry-point' };
     for (const pt of raw.points.slice(0, Math.max(1, maxPoints))) {
       await cdpXY(win, pt.x, pt.y);
@@ -5008,7 +5374,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     } catch { return null; }
   }
   async function mediaPopupOpen(win) {
-    return Boolean(await win.webContents.executeJavaScript(MEDIA_PRESENT_SCRIPT, true).catch(() => false));
+    // 2026-11-21：页面卡住时 executeJavaScript 会永不返回，这里必须有上限
+    return Boolean(await evalJs(win, MEDIA_PRESENT_SCRIPT, 8000));
   }
   /** 父页坐标的可信点击（CDP 真实鼠标）。 */
   async function cdpXY(win, x, y) {
@@ -5024,7 +5391,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
   /** 帧内坐标 → 父页 CDP 可信点击（Chromium 会把落在 iframe 矩形内的点击转发进去，穿透 OOPIF）。 */
   async function clickMediaFramePoint(win, rect) {
     if (!rect) return false;
-    const box = asJson(await win.webContents.executeJavaScript(MEDIA_BOX_SCRIPT, true).catch(() => null));
+    const box = asJson(await evalJs(win, MEDIA_BOX_SCRIPT, 8000));
     if (!box || !box.w) return false;
     return cdpXY(win, box.x + Number(rect.x || 0) + Number(rect.w || 0) / 2, box.y + Number(rect.y || 0) + Number(rect.h || 0) / 2);
   }
@@ -5040,7 +5407,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     } catch { /* */ }
     await sleep(700);
     if (!await mediaPopupOpen(win)) return true;
-    await win.webContents.executeJavaScript(MEDIA_CLOSE_SCRIPT, true).catch(() => null);
+    await evalJs(win, MEDIA_CLOSE_SCRIPT, 8000);
     await sleep(600);
     if (!await mediaPopupOpen(win)) return true;
     const frame = findMediaFrame(win);
@@ -5059,7 +5426,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
   async function uploadMainViaSucai(win, files, label, group = 'square', opts = {}) {
     const fs = require('node:fs/promises');
     const path = require('node:path');
-    const read = async () => asJson(await win.webContents.executeJavaScript(readImageGroupScript(group), true).catch(() => null));
+    const read = async () => asJson(await evalJs(win, readImageGroupScript(group), 15000));
     const before = await read();
     const baseCount = Number(before?.count || 0);
     const baseOrder = (Array.isArray(before?.order) ? before.order : []).map(u => String(u || '').split('?')[0]);
@@ -5236,6 +5603,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     }
     // 逐步骤留证：这次是勾选、点图、裁剪还是确定失败，日志直接看得见（不再只报「回读未通过」）
     emit(`[fill-images] ${label}：素材器步骤 上传=${needles.length} 勾选=${pickedSet.size}`);
+    emit(`[fill-images] ${label}：素材器步骤 勾选完成，开始回填图位（点图 → 回读 → 确定）`);
     const assets = Array.from(assetSrc.values());
     // 只要本店地址（3:4 主图）：不点卡片、不点确定，直接按上传顺序返回地址。
     // 图位由调用方用 buildFillTallImagesScript 写入，避免平台把这张图联动到 1:1 图位。
@@ -5266,14 +5634,30 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     };
     // realtime 素材器（主图）点图就回填，先点图；点图不行再走「父页确定 → 帧内确定」。
     // 顺序很重要：先把父页抽屉关掉会把没回填的选中丢掉，所以确定永远放最后。
-    for (let round = 0; round < 4; round++) {
-      if (round === 0 || round === 3) {
+    // skipCardClick（透明素材图）：点卡片图片会让平台发布页整页无响应（2026-11-24 现场），
+    // 这条流改成「只回读 + 直接写素材地址」，不点卡片。
+    let nullReads = 0;
+    const maxRounds = opts.skipCardClick ? 2 : 4;
+    for (let round = 0; round < maxRounds; round++) {
+      if (!opts.skipCardClick && (round === 0 || round === 3)) {
         for (const needle of needles) {
           const loc = JSON.parse((await evalFrame(frame, mediaCardScript(needle))) || 'null');
           if (loc?.ok && loc.img) { await clickMediaFramePoint(win, loc.img); await sleep(1000); }
         }
       }
       let after = await read();
+      // 页面读不到（弹窗卡住 / 正在重渲染）：明确记一行，别让日志看起来「死」在这里；
+      // 连续两次读不到说明页面真卡死了，立刻收摊交给上面的兜底，别耗到看门狗。
+      if (after == null) {
+        nullReads += 1;
+        emit(`[fill-images] ${label}：素材器步骤 第 ${round + 1} 轮回读时页面没有响应（可能被平台弹窗卡住）`);
+        if (nullReads >= 2) {
+          await closeMediaPopup(win);
+          return { ok: false, reason: 'page-no-response', picked: pickedSet.size, uploaded: needles.length, assets };
+        }
+        continue;
+      }
+      nullReads = 0;
       let hit = accepted(after, 'sucai');
       const stable = await confirmHit(hit);
       if (stable) { await closeMediaPopup(win); return stable; }
@@ -5291,7 +5675,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         const stableCrop = await confirmHit(hit);
         if (stableCrop) { await closeMediaPopup(win); return stableCrop; }
       }
-      const okBtn = asJson(await win.webContents.executeJavaScript(MEDIA_PARENT_OK_SCRIPT, true).catch(() => null));
+      const okBtn = asJson(await evalJs(win, MEDIA_PARENT_OK_SCRIPT, 8000));
       if (okBtn?.ok) {
         emit(`[fill-images] ${label}：点父页确定「${okBtn.text || '确定'}」`);
         await cdpXY(win, okBtn.x + Number(okBtn.w || 0) / 2, okBtn.y + Number(okBtn.h || 0) / 2);
@@ -5306,15 +5690,16 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         return { ok: true, unverified: true, count: Number(after.count || 0), picked: pickedSet.size, uploaded: needles.length, assets };
       }
     }
-    const diag = await win.webContents.executeJavaScript(`(function(){
+    const diag = await evalJs(win, `(function(){
       var f=Array.prototype.slice.call(document.querySelectorAll('iframe')).find(function(x){return /sucai/i.test(x.src||'')&&x.offsetWidth>100;});
       return JSON.stringify({frame:!!f,frameSize:f?[f.offsetWidth,f.offsetHeight]:null,
-        dialogs:Array.prototype.slice.call(document.querySelectorAll('.next-dialog,.next-drawer')).filter(function(d){return d.offsetHeight;}).map(function(d){return String(d.innerText||'').replace(/\\s+/g,' ').slice(0,50);}).slice(0,3)});})()`, true).catch(() => '');
+        dialogs:Array.prototype.slice.call(document.querySelectorAll('.next-dialog,.next-drawer')).filter(function(d){return d.offsetHeight;}).map(function(d){return String(d.innerText||'').replace(/\\s+/g,' ').slice(0,50);}).slice(0,3)});})()`, 8000);
     await closeMediaPopup(win);
     const last = await read();
     return {
       ok: false,
-      reason: 'readback-empty',
+      // 页面读不到 ≠ 回读为空：前者是页面被弹窗/重渲染卡住，要让人知道不是「没选上」
+      reason: last == null ? 'page-no-response' : 'readback-empty',
       picked: pickedSet.size,
       uploaded: needles.length,
       assets,
@@ -5347,7 +5732,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
   }
   /** 关掉「批量导入」弹窗（透明素材图兜底上传时会被误开，留着会挡住提交）。 */
   async function closeBatchImportDialog(win) {
-    const closed = await win.webContents.executeJavaScript(`(function(){
+    const closed = await evalJs(win, `(function(){
       var n=0;
       Array.prototype.slice.call(document.querySelectorAll('.next-dialog,.next-overlay-wrapper')).filter(function(d){
         return d.offsetHeight&&/批量导入/.test(String(d.innerText||''));
@@ -5356,9 +5741,68 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         if(b){b.click();n++;}
       });
       return n;
-    })()`, true).catch(() => 0);
+    })()`, 8000);
     if (closed) await sleep(500);
     return closed;
+  }
+
+  /**
+   * 店铺中分类：按保存的分类名勾选（可多选），并回读确认。
+   * 平台下拉是 Magix 组件，合成点击有时打不开 —— 打不开就用 CDP 真实鼠标点一次坐标。
+   * 返回 { ok, selected, missing, reason }；没有配置时 skipped:true（选填项，不拦提交）。
+   */
+  async function fillShopCategory(win, names) {
+    const wanted = (Array.isArray(names) ? names : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 20);
+    if (!wanted.length) return { ok: true, skipped: true, selected: [], missing: [] };
+    const read = async () => asJson(await evalJs(win, readShopCategoryScript(), 10000));
+    const pick = async () => {
+      const opened = asJson(await evalJs(win, openShopCategoryScript(), 10000));
+      if (!opened?.ok) return { opened, picked: null };
+      await sleep(700);
+      let picked = asJson(await evalJs(win, pickShopCategoryScript(wanted), 12000));
+      // 合成点击没打开下拉：用真实鼠标点一次字段坐标，再勾
+      if (!picked?.found && opened.point && Number.isFinite(Number(opened.point.x))) {
+        await cdpXY(win, Number(opened.point.x), Number(opened.point.y));
+        await sleep(800);
+        picked = asJson(await evalJs(win, pickShopCategoryScript(wanted), 12000));
+      }
+      return { opened, picked };
+    };
+    let state = await read();
+    if (!state?.ok) return { ok: false, reason: state?.reason || 'no-field', selected: [], missing: wanted };
+    // 已选状态的两种来源都要认：标签 chip（selected）或控件本身显示的文字（text）
+    const isSelected = name => {
+      const tags = Array.isArray(state?.selected) ? state.selected : [];
+      const text = String(state?.text || '');
+      return tags.some(v => String(v) === name || String(v).includes(name)) || (text.includes(name) && !/请选择|选择分类/.test(text));
+    };
+    const hasAll = () => wanted.every(isSelected);
+    if (hasAll()) return { ok: true, selected: state.selected || [], missing: [] };
+    let attempt = await pick();
+    await sleep(500);
+    state = await read();
+    if (!hasAll()) {
+      // 第一次可能只展开分组：再点一次补齐
+      attempt = await pick();
+      await sleep(500);
+      state = await read();
+    }
+    // 收下拉（有遮罩会挡住后面的上传/提交）
+    try {
+      const dbg = win.webContents.debugger;
+      try { dbg.attach('1.3'); } catch { /* 已附着 */ }
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+    } catch { /* */ }
+    const selected = Array.isArray(state?.selected) ? state.selected : [];
+    const missing = wanted.filter(name => !isSelected(name));
+    return {
+      ok: missing.length === 0,
+      selected: selected.length ? selected : (missing.length ? [] : wanted),
+      missing,
+      reason: missing.length ? `未勾上：${missing.join('、')}` : '',
+      available: attempt?.picked?.all || attempt?.picked?.sample || [],
+    };
   }
 
   /**
@@ -5397,8 +5841,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     try {
       await fs.writeFile(pngPath, Buffer.from(String(made.data).replace(/^data:image\/png;base64,/, ''), 'base64'));
     } catch { return { ok: false, reason: 'write-failed' }; }
-    const readState = async () => JSON.parse((await win.webContents.executeJavaScript(
-      buildReadImageGroupScript('whiteBg'), true).catch(() => 'null')) || 'null');
+    const readState = async () => JSON.parse((await evalJs(win, buildReadImageGroupScript('whiteBg'), 15000)) || 'null');
     const before = await readState();
     const beforeOrder = (Array.isArray(before?.order) ? before.order : []).map(u => String(u || '').split('?')[0]);
     const changedFromBefore = state => {
@@ -5407,10 +5850,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     };
     let done = { ok: false, reason: 'no-file', cutout: { transparent: made.transparent, bytes: made.bytes, tol: made.tol, bg: made.bg } };
     const acceptVerified = async (via, detail = {}) => {
-      const synced = JSON.parse((await win.webContents.executeJavaScript(
-        buildSyncGuideImageFromDomScript(), true).catch(() => 'null')) || 'null');
-      const verified = JSON.parse((await win.webContents.executeJavaScript(
-        buildVerifyGuideImageScript(), true).catch(() => 'null')) || 'null');
+      const synced = JSON.parse((await evalJs(win, buildSyncGuideImageFromDomScript(), 12000)) || 'null');
+      const verified = JSON.parse((await evalJs(win, buildVerifyGuideImageScript(), 12000)) || 'null');
       if (verified?.ok) {
         try {
           await win.webContents.executeJavaScript(
@@ -5444,10 +5885,13 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     // 0) 老软件实证：透明素材图也走素材中心（点空图位 → 本地上传 → 勾选 → 确定），
     //    这条路不弹原生文件框，也不会误开「批量导入」弹窗。
     {
+      // 透明素材图只有 1 张：不点卡片（点卡片会让平台发布页整页无响应），
+      // 直接按上传后拿到的本店素材地址回填 + 核验。
       const wb = await uploadMainViaSucai(win, [pngPath], '透明素材图', 'whiteBg', {
         frameWaitMs: 5000,
         maxPoints: 3,
         requireVerified: true,
+        skipCardClick: true,
       });
       if (wb.ok && await acceptVerified('sucai', { changed: wb.changed })) {
         await closeMediaPopup(win);
@@ -5468,8 +5912,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         .map(u => String(u).split('?')[0])
         .find(u => /^https?:\/\//i.test(u));
       if (assetUrl) {
-        const written = JSON.parse((await win.webContents.executeJavaScript(
-          buildWriteGuideImageScript([assetUrl]), true).catch(() => 'null')) || 'null');
+        const written = JSON.parse((await evalJs(win, buildWriteGuideImageScript([assetUrl]), 12000)) || 'null');
         if (written?.ok && await acceptVerified('sucai-asset', { asset: assetUrl })) {
           emit(`[fill-images] 透明素材图：图位没回填，已用本店素材地址直接写入并核验（…${assetUrl.slice(-28)}）`);
           await closeMediaPopup(win);
@@ -5481,7 +5924,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     }
     // 1) 原生选择框（已开拦截，直接把 PNG 塞给它）
     if (!done.ok) {
-      const loc = asJson(await win.webContents.executeJavaScript(buildOpenImageEntryScript('whiteBg', true), true).catch(() => null));
+      const loc = asJson(await evalJs(win, buildOpenImageEntryScript('whiteBg', true), 12000));
       if (loc?.ok && Number.isFinite(Number(loc.x))) {
         const ch = await uploadViaChooserAt(win, { x: Number(loc.x), y: Number(loc.y) }, [pngPath]);
         if (ch.ok) {
@@ -5498,11 +5941,11 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     }
     // 2) 点空图位后挂出来的本地上传框
     if (!done.ok) {
-      const opened = asJson(await win.webContents.executeJavaScript(buildOpenImageEntryScript('whiteBg'), true).catch(() => null));
+      const opened = asJson(await evalJs(win, buildOpenImageEntryScript('whiteBg'), 12000));
       if (opened?.ok) {
         for (let t = 0; t < 10; t++) {
           await sleep(500);
-          const target = asJson(await win.webContents.executeJavaScript(buildFindUploadInputScript('whiteBg', 0), true).catch(() => null));
+          const target = asJson(await evalJs(win, buildFindUploadInputScript('whiteBg', 0), 12000));
           if (target && target.index >= 0) {
             const r = await setFileOnInput(win, target.index, [pngPath]);
             if (r.ok) {
@@ -5536,8 +5979,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       try {
         const up = await pictureSpace.uploadOne(pngPath, `透明素材图-${Date.now()}`);
         if (up?.ok && /^https?:\/\//i.test(String(up.url || ''))) {
-          const written = JSON.parse((await win.webContents.executeJavaScript(
-            buildWriteGuideImageScript([up.url]), true).catch(() => 'null')) || 'null');
+          const written = JSON.parse((await evalJs(win, buildWriteGuideImageScript([up.url]), 12000)) || 'null');
           if (written?.ok && await acceptVerified('picture-space', { uploadUrl: up.url })) {
             await closeMediaPopup(win);
             return { ...done, file: pngPath, srcW: made.srcW, srcH: made.srcH };
@@ -5553,16 +5995,15 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       }
     }
     if (!done.ok) {
-      const diag = await win.webContents.executeJavaScript(buildWhiteBgDiagScript(), true).catch(() => '');
+      const diag = await evalJs(win, buildWhiteBgDiagScript(), 10000);
       if (diag) done.diag = diag;
       // 平台到底说了什么（图位拒收/像素不符/必填提示）—— 以前只能猜，现在写进日志
-      const toast = asJson(await win.webContents.executeJavaScript(READ_TOAST_SCRIPT, true).catch(() => null));
+      const toast = asJson(await evalJs(win, READ_TOAST_SCRIPT, 8000));
       if (Array.isArray(toast) && toast.length) {
         done.toast = toast;
         emit(`[fill-images] 透明素材图：平台提示 ${toast.join(' / ').slice(0, 160)}`);
       }
-      const verified = JSON.parse((await win.webContents.executeJavaScript(
-        buildVerifyGuideImageScript(), true).catch(() => 'null')) || 'null');
+      const verified = JSON.parse((await evalJs(win, buildVerifyGuideImageScript(), 12000)) || 'null');
       done.verify = verified;
       if (!done.reason || done.reason === 'no-file') done.reason = `upload-not-verified:${verified?.reason || 'unknown'}`;
     }
@@ -6050,7 +6491,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     const leaveWindowForManual = async tag => {
       let guard = null;
       try {
-        const g = await win.webContents.executeJavaScript(suppressCategoryDialogScript(), true).catch(() => null);
+        const g = await evalJs(win, suppressCategoryDialogScript(), 6000);
         guard = typeof g === 'string' ? JSON.parse(g || 'null') : g;
       } catch { /* 窗口可能已被销毁，仍要把窗口亮出来 */ }
       emit(`[dialog-guard] ${tag}：已关闭「选择类目」弹窗并持续抑制 · 发布窗口可直接手动填写`
@@ -6059,8 +6500,27 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       try { win.show(); } catch { /* */ }
     };
     try {
+      // 每次上架重新开始：清掉上一次的停止标记，并记录「当前步骤」，
+      // 停止/看门狗/超时都靠它告诉用户卡在哪里。
+      // 注意：清标记前先看本次是否已经被要求停止（停止按钮可能正好卡在建窗口那一下）。
+      const stopAsked = typeof input.shouldStop === 'function' && input.shouldStop() === true;
+      cancelState = { stopped: stopAsked, reason: stopAsked ? '已手动停止' : '' };
+      activeStep = '准备上架';
+      const step = label => {
+        activeStep = String(label || '');
+        if (cancelState.stopped) throw Object.assign(new Error(cancelState.reason || '已停止上架'), { code: 'STOPPED' });
+        if (typeof input.shouldStop === 'function' && input.shouldStop()) {
+          cancelState.stopped = true;
+          cancelState.reason = '已手动停止';
+          throw Object.assign(new Error('已手动停止'), { code: 'STOPPED' });
+        }
+        emit(`[step] ${activeStep}`);
+        void drainPageDialogs(win);
+      };
       const storeId = String(input.storeId || '');
       if (!storeId) throw Object.assign(new Error('缺少上架目标店铺'), { code: 'NO_SHOP' });
+      // 店铺中分类：本次页面读到的真实选项（上架后回写给设置页，下次不用再开窗口）
+      let shopCategoryState = null;
       const categoryId = String(input.categoryId || '').trim();
       if (!/^\d+$/.test(categoryId)) throw Object.assign(new Error('缺少上架类目 ID'), { code: 'MISSING_CATEGORY' });
       const detail = input.detail || {};
@@ -6105,10 +6565,36 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       // 文件选择框拦截必须在页面开始加载前装好：素材中心的 input 在跨域 iframe 里，
       // 事后在主 session 上补拦截挡不住 iframe 的 chooser，会弹 Windows 原生「打开」框。
       fileChooserGuard = installFileChooserGuard(win);
+      // 页面 JS 弹窗（alert/confirm）会阻塞渲染进程 → 所有 executeJavaScript 永不返回。
+      // 主框架、已有子框架、后续新建的框架都装上自动确认守卫（素材中心就在跨域 iframe 里）。
+      {
+        activePublishWindow = win;
+        activeStep = '打开发布页';
+        const injectDialogGuard = target => {
+          try { target.executeJavaScript(PAGE_DIALOG_GUARD_SCRIPT, true).catch(() => undefined); } catch { /* 帧已销毁 */ }
+        };
+        const injectAllFrames = () => {
+          try { injectDialogGuard(win.webContents); } catch { /* */ }
+          try {
+            for (const frame of (win.webContents.mainFrame?.framesInSubtree || [])) {
+              if (frame && frame !== win.webContents.mainFrame) injectDialogGuard(frame);
+            }
+          } catch { /* */ }
+        };
+        win.webContents.on('dom-ready', injectAllFrames);
+        try {
+          win.webContents.on('frame-created', (_event, details) => {
+            const frame = details?.frame;
+            if (!frame) return;
+            frame.on('dom-ready', () => injectDialogGuard(frame));
+          });
+        } catch { /* 旧版本 Electron 没有 frame-created */ }
+      }
       await fileChooserGuard.install();
       emit('[open] 文件选择框拦截已就绪，开始加载发布页');
 
       await Promise.race([win.loadURL(url.toString()), sleep(45000).then(() => { throw new Error('发布页打开超时'); })]);
+      step('等待发布页渲染');
 
       // 等表单真正渲染完：标题先出来，属性/SKU/图片模块是异步挂载的。
       // 老软件日志里的「直达发布页就绪 itemProp.ds=10 keyProp.ds=1 (+5.5s)」就是在等这个。
@@ -6152,6 +6638,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         if (diag) emit(`[field-diagnostic] ${String(diag).slice(0, 3000)}`);
       }
 
+      step('填写品牌与系列');
       // ① 品牌 + 系列必须「一起」写：老软件 P6 fastpath（navigation.js:2019-2106）实证，
       //    p-20000 和 p-20000~1 是同一个 keyProp，同一次 engine.updateModels 原生写入。
       //    采集来的竞品品牌（燕山神）不该写进自己店铺；用页面「授权品牌列表」里的第一个（腾味莱）。
@@ -6242,6 +6729,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('填写商品标题与导购标题');
       // ③ 标题（商品标题 30 汉字/60 字符；导购标题 10–15 汉字 = 20–30 字符，汉字算 2）
       const rawTitle = String(title || '');
       const safeTitle = [...rawTitle].slice(0, 30).join('');
@@ -6258,6 +6746,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         if (tr?.errors?.length) emit(`[fill-title] 页面校验提示：${rankErrors(tr.errors).slice(0, 3).join(' / ')}`);
       }
 
+      step('填写属性');
       // ③ 属性 + 组件填充：一次走 fillFormScript（纯文本 / next-select / 单选多选 都能落）
       const skusForBase = (Array.isArray(draft?.skus) ? draft.skus : Array.isArray(listing.skus) ? listing.skus : [])
         .filter(s => s && s.name && !s.removed);
@@ -6284,6 +6773,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         emit('[fill-attrs] 草稿里没有参数，跳过');
       }
 
+      step('填写保质期');
       // ④ 保质期：按采集值填「数字 + 单位」。通用填充只写数字，单位会停在「请选择单位」，
       // 而 React 受控数字框还会把直接赋值回退成空 —— 这里单独用真实输入 + 回读处理。
       {
@@ -6311,6 +6801,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('创建规格');
       // ⑤ SKU：新版发布页的 SKU 表要先「创建规格」才会出现行
       const skuProps = (Array.isArray(detail?.skuProperties) ? detail.skuProperties : [])
         .filter(p => p && p.pname && Array.isArray(p.values) && p.values.length);
@@ -6339,6 +6830,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
         await sleep(1500);
       }
+      step('填写 SKU 价格与库存');
       // ⑥ SKU（价格 / 库存 / 商家编码）
       const skus = skusForBase;
       if (skus.length) {
@@ -6349,6 +6841,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         emit('[fill-sku] 草稿与采集都没有规格，跳过');
       }
 
+      step('必填项兜底');
       // ⑥ 必填兜底：用「服务端提议（参数/标题推算/类目默认/记忆）+ 本地推导」
       let remainingGaps = [];
       let requiredFilled = [];
@@ -6363,6 +6856,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         emit(`[fill-required] 必填兜底${sourceNote}：补填 ${requiredFilled.length} 项${requiredFilled.length ? `（${requiredFilled.slice(0, 6).join('、')}）` : ''}${remainingGaps.length ? `；仍缺 ${remainingGaps.slice(0, 6).join('、')}` : '；没有必填缺口'}`);
       }
 
+      step('填写物流与发货地');
       // ⑦ 物流 / 发货地（用组件感知填充，级联/下拉也能写）
       const logistics = [];
       if (Array.isArray(draft?.logistics)) logistics.push(...draft.logistics);
@@ -6373,6 +6867,21 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         emit(`[fill-logistics] 物流必填项核对 ${r?.filled?.length ? `已填 ${r.filled.join('、')}` : '未命中字段'}${r?.missed?.length ? `，未命中 ${r.missed.join('、')}` : ''}`);
       }
 
+      step('填写店铺中分类');
+      // ⑧ 店铺中分类（卖家自定义分类，可多选）：按「上架设置」里为该店铺保存的分类勾选。
+      // 选填项：没配置就跳过；配置了但勾不上只告警，不拦提交（否则整件商品白跑）。
+      {
+        const names = Array.isArray(input.config?.shopCategoryNames?.[storeId])
+          ? input.config.shopCategoryNames[storeId]
+          : (Array.isArray(input.shopCategories) ? input.shopCategories : []);
+        const sc = await fillShopCategory(win, names);
+        shopCategoryState = sc;
+        if (sc.skipped) emit('[fill-shopcat] 店铺中分类：这次没有为这家店铺保存分类，按平台默认（不选）');
+        else if (sc.ok) emit(`[fill-shopcat] 店铺中分类：已勾选并回读「${(sc.selected || []).join('、') || (names || []).join('、')}」`);
+        else emit(`[fill-shopcat] ⚠ 店铺中分类没勾上（${sc.reason || 'unknown'}${Array.isArray(sc.available) && sc.available.length ? ` · 下拉可见：${sc.available.slice(0, 6).join('、')}` : ''}），可在发布窗口手动补选`);
+      }
+
+      step('填写多件优惠与正装');
       // ⑧ SKU 搜索标题 + 是否为样品（选「正装」）+ 多件优惠（启用 + 9.5 折）
       {
         const sr = asJson(await win.webContents.executeJavaScript(fillSkuSearchTitleScript(title), true).catch(() => null));
@@ -6426,6 +6935,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('上传 1:1 主图');
+      await assertPageAlive(win, '上传主图前');
       // ⑦ 图片：1:1 主图 + 3:4 + 详情 + SKU 图，全部按图位保序上传（本轮不用接口，直接页面上传）
       const imagePlan = resolveImagePlan(draft, detail);
       const workDirImages = require('node:path').join(input.tempDir || require('node:os').tmpdir(), 'xx-images', String(detail.itemId || Date.now()));
@@ -6499,6 +7010,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('上传透明素材图');
+      await assertPageAlive(win, '上传透明素材图前');
       // 透明素材图（导购素材 · 800×800 · 必填）：方案 A —— 用第一张 1:1 主图转 800×800 PNG 先占位
       {
         const transFile = String(draft?.transFile || '').trim();
@@ -6516,6 +7029,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('上传 3:4 主图');
+      await assertPageAlive(win, '上传 3:4 主图前');
       // 3:4 主图：先转存本店素材中心，再写 threeToFourImages。
       // 不能直接写采集图 URL：那只是“引用别人的图片”，没有进入本店图片空间。
       let tallBoundUrls = [];
@@ -6604,6 +7119,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('上传详情图');
+      await assertPageAlive(win, '上传详情图前');
       // 详情图：老软件 fillDetailImages 同款 —— 先下载采集图、上传本店素材中心，
       // 用本店图片空间地址源码导入。直接写别人的 URL 是外链图，平台随时判无效。
       if (imagePlan.detail.length) {
@@ -6650,6 +7167,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         const finalDetail = Number(await win.webContents.executeJavaScript(buildDetailCountScript(), true).catch(() => -1));
         if (finalDetail === 0) emit('[fill-detail] ⚠ 详情页仍是 0 张图（详情为必填，提交大概率被拦）');
       }
+      step('写入 SKU 图');
       // SKU 图：写 customSaleProp/saleProp 的规格值 img + 行 props[0].img + skuPicture（不上传，顺序=规格顺序）
       if (imagePlan.sku.length) {
         const items = imagePlan.sku
@@ -6665,6 +7183,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         }
       }
 
+      step('填写总净含量');
       // SKU 表必填列：总净含量按采集到的净含量写（80g 就写 80，不再写死 1g）
       const netFact = skuProductFact(draft, detail, input.hints);
       const netGrams = netFact.grams || 0;
@@ -6680,6 +7199,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         emit('[fill-sku] 总净含量：采集参数里没有可用的净含量，跳过（避免写错值）');
       }
 
+      step('关联包含产品');
       // SKU 表必填列：包含产品 —— 走真实产品档案（搜索→选中/新建→确定），再按件数 1 写给所有规格行
       {
         const fact = skuProductFact(draft, detail, input.hints);
@@ -6728,6 +7248,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         if (!settled.closed) emit('[submit] ⚠ 「选择类目」弹窗仍在，会挡住提交按钮');
       }
 
+      step('提交前自检');
       // ⑩ 提交前自检：把真正拦路项列成人话并就地补救，不再让静态提示冒充失败原因
       // 先把可能被我们误开的「批量导入」弹窗关掉，否则它会压在页面上挡住提交（2026-11-17 现场）
       if (await closeBatchImportDialog(win)) emit('[presubmit] 已关闭残留的「批量导入」弹窗');
@@ -6869,6 +7390,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
           + (guardBase ? `（立即处理 ${guardBase} 个）` : ''));
       }
 
+      step('提交入仓');
       // ⑩ 提交（勾「放入仓库」）
       if (await mediaPopupOpen(win)) {
         const closedLast = await closeMediaPopup(win);
@@ -6921,6 +7443,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         await leaveWindowForManual('找不到提交按钮');
         throw Object.assign(new Error('提交按钮不可用（找不到「提交」或页面还在转）'), { code: 'PUBLISH_FAILED' });
       }
+      step('等待入仓回执');
       // ⑪ 轮询回执（老软件 submitToWarehouse 同款：每秒读、错误稳定 2 次即停、超时抓弹窗留证）
       // 2026-11-20 现场：点提交之后平台要转一会儿才跳 success.htm，这期间按钮可能还是「提交」，
       // 千万别急着补点（上一版 6 秒就补点，越点越乱）。现在：至少等 20 秒、页面不忙、没有报错、
@@ -6949,6 +7472,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
             ok: true, warehouseItemId: last.primaryId, url: last.href,
             required: { filled: requiredFilled, gaps: remainingGaps },
             spacePictures: detailSpacePictures.length,
+            shopCategories: Array.isArray(shopCategoryState?.available) ? shopCategoryState.available : [],
           };
         }
         if (last?.captcha) {
@@ -7020,15 +7544,25 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         : `提交 ${attempts} 次仍未收到入仓回执（发布页已留在窗口里，可人工确认后重试）`) + blockersNote + diagNote;
       throw Object.assign(new Error(reason), { code: 'PUBLISH_FAILED' });
     } catch (error) {
-      // 任何异常都要把发布窗口亮出来给人接手（2026-11-17：脚本异常时窗口没弹，用户不知道错在哪）
+      // 手动停止/超时中断：窗口已经被 cancel() 销毁，不再弹窗打扰用户
+      const stopped = String(error?.code || '') === 'STOPPED' || cancelState.stopped;
+      const hung = String(error?.code || '') === 'PAGE_HUNG';
       try {
-        if (win && !(typeof win.isDestroyed === 'function' && win.isDestroyed())) {
+        if (hung && win && !(typeof win.isDestroyed === 'function' && win.isDestroyed())) {
+          // 页面已经无响应：弹窗也没法用，直接销毁，避免下一件商品又被它挡住
+          try { win.destroy(); } catch { /* */ }
+        } else if (!stopped && win && !(typeof win.isDestroyed === 'function' && win.isDestroyed())) {
           await leaveWindowForManual(`上架中断：${String(error?.message || error).slice(0, 40)}`);
         }
       } catch { /* */ }
+      if (stopped && String(error?.code || '') !== 'STOPPED') {
+        throw Object.assign(new Error(cancelState.reason || '已手动停止'), { code: 'STOPPED' });
+      }
       throw error;
     } finally {
       activeLog = null;
+      activePublishWindow = null;
+      activeStep = '';
       // 全局文件选择框拦截随发布窗口一起结束；成功入仓时窗口已关，dispose 只需清监听
       if (fileChooserGuard) {
         try { fileChooserGuard.dispose(); } catch { /* */ }
@@ -7121,17 +7655,20 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     mediaInjectScript, mediaCardScript, buildFindAssetCardScript, mediaUploadStateScript, buildImageEntryPointsScript, MEDIA_CHALLENGE_SCRIPT,
     buildOpenDetailImageEntryScript, buildReadNamedAssetsScript,
   };
-  return { publish, backfill, __mediaScripts, __resolveImagePlan: resolveImagePlan };
+  return { publish, backfill, cancel, currentStep, __mediaScripts, __resolveImagePlan: resolveImagePlan };
 }
 
 module.exports = {
   createPublishDriver, PUBLISH_HOST, materialUrlCandidates, normalizeMaterialUrl, imageHeaderSize,
+  // 店铺中分类：设置页「刷新」用只读探测窗口读选项，跑的就是同一段页面脚本
+  readShopCategoryOptionsScript,
   // 自测用：注入到发布页里的脚本必须能编译（`node --check` 只查驱动本身，不查这些字符串）。
   __scripts: {
     probeScript, fillTitleScript, fillBrandScript, fillAttrsScript, fillSkuScript,
     fillNamedScript, fillRequiredGapsScript, fillSmartScript, fillFormScript, fillSkuSearchTitleScript, selectSkuSpecsScript,
     collapseAssistantScript, fillMultiBuyScript, createSkuSpecsScript, selectBrandFirstScript, fillSampleAndMultiBuyScript,
     fillShelfLifeScript, focusDiscountScript, readExtraScript,
+    openShopCategoryScript, readShopCategoryScript, pickShopCategoryScript, readShopCategoryOptionsScript,
     readBrandScript, readSampleScript, fillFoodSafetyScript,
     fillGuideTitleScript, fillSeriesScript, fillSampleItemScript, closeCategoryDialogScript,
     fillTitlesAllScript, readCategoryDialogScript, preSubmitCheckScript, fieldDiagnosticsScript, writeBrandSeriesScript,

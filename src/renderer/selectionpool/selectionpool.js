@@ -26,7 +26,38 @@
     tofill: '待回填', done: '已完成', publishFailed: '上架失败',
   };
   const PLATFORM_LABELS = { taobao: '淘宝', tmall: '天猫', '1688': '1688' };
-  const RANGES = [['all', '全部'], ['today', '今天'], ['yesterday', '昨天'], ['7d', '近 7 天'], ['30d', '近 30 天']];
+  /* ---- 加入时间：日期区间（用户 2026-11-21 要求按「2026-11-15 00:00:00 - 2026-11-20 23:59:59」这种形式展示） ---- */
+  const pad2 = v => String(v).padStart(2, '0');
+  const fmtDay = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const dayStart = d => `${fmtDay(d)} 00:00:00`;
+  const dayEnd = d => `${fmtDay(d)} 23:59:59`;
+  // 界面按本机时间显示，查询转成 ISO（后端存的是 UTC，直接比字符串会差 8 小时）
+  const toIsoTime = value => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const date = new Date(raw.replace(' ', 'T'));
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+  };
+  const monthKeyOf = date => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
+  const monthDate = key => { const [y, m] = String(key || '').split('-').map(Number); return new Date(y || new Date().getFullYear(), (m || 1) - 1, 1); };
+  const shiftMonth = (key, delta) => { const d = monthDate(key); d.setMonth(d.getMonth() + delta); return monthKeyOf(d); };
+  const monthCells = key => {
+    const first = monthDate(key);
+    const start = new Date(first);
+    start.setDate(1 - first.getDay());
+    const out = [];
+    for (let i = 0; i < 42; i += 1) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      out.push({ date: fmtDay(d), day: d.getDate(), inMonth: d.getMonth() === first.getMonth() });
+    }
+    return out;
+  };
+  const DATE_QUICK = [
+    ['today', '今天'], ['yesterday', '昨天'], ['before', '前天'],
+    ['d3', '最近3天'], ['d7', '最近7天'], ['d15', '最近15天'], ['d30', '最近30天'],
+    ['month', '本月'], ['lastMonth', '上个月'],
+  ];
   const SORTS = [['newest', '最近加入'], ['oldest', '最早加入'], ['price_asc', '价格从低到高'], ['price_desc', '价格从高到低']];
 
   function create(deps) {
@@ -43,6 +74,13 @@
       scope: 'mine',           // mine | team
       keyword: '', group: 'all', platform: 'all', status: 'all',
       sort: 'newest', team: 'all', owner: 'all', range: 'all',
+      // 加入时间区间（空 = 全部）；dateDraft 是弹层里正在编辑、点「确定」才生效
+      dateRange: { start: '', end: '' },
+      dateOpen: false,
+      dateDraft: { start: '', end: '' },
+      dateMonth: '',
+      datePicking: 'start',
+      dateRecent: { on: false, days: 7 },
       page: 1, size: 50,
       selected: new Set(),
       dialog: '',              // overview | logs | shelf | templates | localImages | apiConfig | detail
@@ -72,7 +110,9 @@
       return {
         keyword: ui.keyword, group: ui.group, platform: ui.platform, status: ui.status,
         sort: ui.sort, team: ui.team, owner: ui.owner, scope: ui.scope,
-        recentDays: ui.range === 'today' ? 1 : ui.range === 'yesterday' ? 2 : ui.range === '7d' ? 7 : ui.range === '30d' ? 30 : 0,
+        recentDays: 0,
+        start: toIsoTime(ui.dateRange.start),
+        end: toIsoTime(ui.dateRange.end),
         page: ui.page, size: ui.size, ...extra,
       };
     }
@@ -229,9 +269,65 @@
       </div>
       <div class="sp-rangebar">
         <span class="sp-range-label">加入时间</span>
-        ${RANGES.map(([v, l]) => `<button type="button" class="filter-chip ${ui.range === v ? 'active' : ''}" data-action="selectionpool:range" data-value="${v}">${esc(l)}</button>`).join('')}
-        <button type="button" class="filter-chip" data-action="selectionpool:range-custom">自定义</button>
+        <div class="sp-daterange-wrap">
+          <button type="button" class="sp-daterange${ui.dateRange.start || ui.dateRange.end ? ' has-value' : ''}" data-action="selectionpool:date-open" aria-label="选择加入时间区间">
+            ${svg('clock')}
+            ${ui.dateRange.start || ui.dateRange.end
+              ? `<span class="sp-daterange-val">${esc(ui.dateRange.start || '不限')}</span><i>-</i><span class="sp-daterange-val">${esc(ui.dateRange.end || '不限')}</span>`
+              : '<span class="sp-daterange-placeholder">全部时间</span>'}
+            <em class="sp-daterange-caret">▾</em>
+          </button>
+          ${ui.dateOpen ? datePopover() : ''}
+        </div>
+        ${ui.dateRange.start || ui.dateRange.end ? '<button type="button" class="filter-chip" data-action="selectionpool:date-clear">清空</button>' : ''}
         <span class="spacer"></span>
+      </div>`;
+    }
+
+    /** 加入时间的双月日历弹层（快捷区间 + 起止日期时间 + 最近 N 天）。 */
+    function datePopover() {
+      const draft = ui.dateDraft;
+      const leftKey = ui.dateMonth || monthKeyOf(new Date());
+      const rightKey = shiftMonth(leftKey, 1);
+      const startDay = String(draft.start || '').slice(0, 10);
+      const endDay = String(draft.end || '').slice(0, 10);
+      const timeOf = (value, fallback) => String(value || '').slice(11, 19) || fallback;
+      const monthPanel = key => {
+        const first = monthDate(key);
+        const cells = monthCells(key);
+        return `<div class="sp-cal">
+          <div class="sp-cal-head">
+            <button type="button" class="sp-cal-nav" data-action="selectionpool:date-nav" data-dir="-1" aria-label="上个月">‹</button>
+            <b>${first.getFullYear()}年${first.getMonth() + 1}月</b>
+            <button type="button" class="sp-cal-nav" data-action="selectionpool:date-nav" data-dir="1" aria-label="下个月">›</button>
+          </div>
+          <div class="sp-cal-week">${['日', '一', '二', '三', '四', '五', '六'].map(w => `<span>${w}</span>`).join('')}</div>
+          <div class="sp-cal-grid">${cells.map(cell => {
+            const inRange = Boolean(startDay && endDay && cell.date > startDay && cell.date < endDay);
+            const cls = ['sp-cal-day', cell.inMonth ? '' : 'out', cell.date === startDay ? 'start' : '', cell.date === endDay ? 'end' : '', inRange ? 'in' : ''].filter(Boolean).join(' ');
+            return `<button type="button" class="${cls}" data-action="selectionpool:date-pick" data-date="${cell.date}">${cell.day}</button>`;
+          }).join('')}</div>
+        </div>`;
+      };
+      return `<div class="sp-datepop">
+        <button type="button" class="sp-datepop-mask" data-action="selectionpool:date-close" aria-label="关闭时间选择"></button>
+        <div class="sp-datepop-panel" role="dialog" aria-label="加入时间区间">
+          <div class="sp-datepop-quick">${DATE_QUICK.map(([v, l]) => `<button type="button" class="filter-chip" data-action="selectionpool:date-quick" data-value="${v}">${l}</button>`).join('')}</div>
+          <div class="sp-datepop-fields">
+            <input class="sp-input" type="date" data-sp-date-field="startDate" value="${esc(startDay)}" aria-label="开始日期">
+            <input class="sp-input" type="time" step="1" data-sp-date-field="startTime" value="${esc(timeOf(draft.start, '00:00:00'))}" aria-label="开始时间">
+            <span>-</span>
+            <input class="sp-input" type="date" data-sp-date-field="endDate" value="${esc(endDay)}" aria-label="结束日期">
+            <input class="sp-input" type="time" step="1" data-sp-date-field="endTime" value="${esc(timeOf(draft.end, '23:59:59'))}" aria-label="结束时间">
+          </div>
+          <div class="sp-datepop-cals">${monthPanel(leftKey)}${monthPanel(rightKey)}</div>
+          <div class="sp-datepop-foot">
+            <label class="sp-datepop-recent"><input type="checkbox" data-sp-date-recent ${ui.dateRecent.on ? 'checked' : ''}><span>最近</span><input class="sp-input mini" type="number" min="1" max="365" value="${Number(ui.dateRecent.days) || 7}" data-sp-date-days><span>天（含今天）</span></label>
+            <span class="spacer"></span>
+            <button type="button" class="button small" data-action="selectionpool:date-clear">清空</button>
+            <button type="button" class="button primary small" data-action="selectionpool:date-apply">确定</button>
+          </div>
+        </div>
       </div>`;
     }
 
@@ -514,15 +610,84 @@
         }
         case 'query': ui.page = 1; await reload(); return true;
         case 'reset':
-          Object.assign(ui, { keyword: '', group: 'all', platform: 'all', status: 'all', sort: 'newest', team: 'all', owner: 'all', range: 'all', page: 1 });
+          Object.assign(ui, {
+            keyword: '', group: 'all', platform: 'all', status: 'all', sort: 'newest', team: 'all', owner: 'all', page: 1,
+            dateRange: { start: '', end: '' }, dateDraft: { start: '', end: '' }, dateOpen: false,
+          });
           await reload(); return true;
         case 'view': ui.view = value === 'gallery' ? 'gallery' : 'list'; render(); return true;
         case 'scope': ui.scope = value === 'team' ? 'team' : 'mine'; await reload(); return true;
-        case 'range': ui.range = value || 'all'; ui.page = 1; await reload(); return true;
-        case 'range-custom': {
-          const values = await modal({ title: '自定义加入时间', description: '格式 YYYY-MM-DD，留空表示不限', fields: '<div class="field"><label>开始</label><input name="start" class="sp-input" placeholder="2026-01-01"></div><div class="field"><label>结束</label><input name="end" class="sp-input" placeholder="2026-12-31"></div>', confirm: '应用' });
-          if (values?.start || values?.end) { ui.customRange = values; ui.range = 'custom'; await reload(); }
-          return true;
+        // ---- 加入时间：日期区间 ----
+        case 'date-open': {
+          ui.dateOpen = true;
+          ui.dateDraft = { ...ui.dateRange };
+          const base = ui.dateRange.start ? new Date(String(ui.dateRange.start).replace(' ', 'T')) : new Date();
+          ui.dateMonth = monthKeyOf(Number.isNaN(base.getTime()) ? new Date() : base);
+          ui.datePicking = ui.dateDraft.start && !ui.dateDraft.end ? 'end' : 'start';
+          render(); return true;
+        }
+        case 'date-close': ui.dateOpen = false; render(); return true;
+        case 'date-nav': {
+          ui.dateMonth = shiftMonth(ui.dateMonth || monthKeyOf(new Date()), Number(target.dataset.dir) || 1);
+          render(); return true;
+        }
+        case 'date-pick': {
+          const day = String(target.dataset.date || '');
+          if (!day) return true;
+          const draft = { ...ui.dateDraft };
+          if (ui.datePicking === 'start' || !draft.start || (draft.start && draft.end)) {
+            draft.start = `${day} 00:00:00`;
+            draft.end = '';
+            ui.datePicking = 'end';
+          } else {
+            const startDay = String(draft.start).slice(0, 10);
+            if (day < startDay) {
+              draft.start = `${day} 00:00:00`;
+              draft.end = `${startDay} 23:59:59`;
+            } else {
+              draft.end = `${day} 23:59:59`;
+            }
+            ui.datePicking = 'start';
+          }
+          ui.dateDraft = draft;
+          ui.dateRecent = { ...ui.dateRecent, on: false };
+          render(); return true;
+        }
+        case 'date-quick': {
+          const preset = String(value || '');
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const from = new Date(today);
+          const to = new Date(today);
+          let days = 0;
+          if (preset === 'yesterday') { from.setDate(from.getDate() - 1); to.setDate(to.getDate() - 1); }
+          else if (preset === 'before') { from.setDate(from.getDate() - 2); to.setDate(to.getDate() - 2); }
+          else if (preset === 'd3') days = 3;
+          else if (preset === 'd7') days = 7;
+          else if (preset === 'd15') days = 15;
+          else if (preset === 'd30') days = 30;
+          else if (preset === 'month') from.setDate(1);
+          else if (preset === 'lastMonth') { from.setMonth(from.getMonth() - 1, 1); to.setDate(0); }
+          if (days) from.setDate(today.getDate() - days + 1);
+          ui.dateDraft = { start: dayStart(from), end: dayEnd(to) };
+          ui.dateMonth = monthKeyOf(from);
+          ui.datePicking = 'start';
+          ui.dateRecent = { ...ui.dateRecent, on: false };
+          render(); return true;
+        }
+        case 'date-apply': {
+          ui.dateRange = { ...ui.dateDraft };
+          ui.dateOpen = false;
+          ui.page = 1;
+          await reload(); return true;
+        }
+        case 'date-clear': {
+          ui.dateRange = { start: '', end: '' };
+          ui.dateDraft = { start: '', end: '' };
+          ui.dateOpen = false;
+          ui.dateRecent = { ...ui.dateRecent, on: false };
+          ui.page = 1;
+          await reload(); return true;
         }
         case 'show-success': if (dialogs) dialogs.open('publication', { tab: 'records' }); else { ui.status = 'landed'; ui.page = 1; await reload(); } return true;
         case 'show-failed': if (dialogs) dialogs.open('publication', { tab: 'failures' }); else { ui.status = 'publishFailed'; ui.page = 1; await reload(); } return true;
@@ -865,6 +1030,54 @@
       if (editorUi()?.isOpen() && editorUi().handleChange(event)) return true;
       const target = event.target;
       const action = target?.dataset?.action;
+      // ---- 加入时间弹层里的日期/时间/最近N天 ----
+      if (target?.dataset?.spDateField) {
+        const val = name => String(document.querySelector(`[data-sp-date-field="${name}"]`)?.value || '');
+        const normTime = (text, fallback) => {
+          const raw = String(text || '').trim();
+          if (!raw) return fallback;
+          return raw.length === 5 ? `${raw}:00` : raw;
+        };
+        const startDay = val('startDate');
+        const endDay = val('endDate');
+        ui.dateDraft = {
+          start: startDay ? `${startDay} ${normTime(val('startTime'), '00:00:00')}` : '',
+          end: endDay ? `${endDay} ${normTime(val('endTime'), '23:59:59')}` : '',
+        };
+        if (startDay) ui.dateMonth = startDay.slice(0, 7);
+        ui.dateRecent = { ...ui.dateRecent, on: false };
+        render();
+        return true;
+      }
+      if (target?.dataset?.spDateRecent !== undefined) {
+        const on = Boolean(target.checked);
+        ui.dateRecent = { ...ui.dateRecent, on };
+        if (on) {
+          const days = Math.max(1, Math.min(365, Number(ui.dateRecent.days) || 7));
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const from = new Date(today);
+          from.setDate(today.getDate() - days + 1);
+          ui.dateDraft = { start: dayStart(from), end: dayEnd(today) };
+          ui.dateMonth = monthKeyOf(from);
+          ui.datePicking = 'start';
+        }
+        render();
+        return true;
+      }
+      if (target?.dataset?.spDateDays !== undefined) {
+        const days = Math.max(1, Math.min(365, Number(target.value) || 7));
+        ui.dateRecent = { ...ui.dateRecent, days };
+        if (ui.dateRecent.on) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const from = new Date(today);
+          from.setDate(today.getDate() - days + 1);
+          ui.dateDraft = { start: dayStart(from), end: dayEnd(today) };
+        }
+        render();
+        return true;
+      }
       if (action === 'selectionpool:filter-group') { ui.group = target.value; ui.page = 1; reload(); return true; }
       if (action === 'selectionpool:filter-platform') { ui.platform = target.value; ui.page = 1; reload(); return true; }
       if (action === 'selectionpool:filter-status') { ui.status = target.value; ui.page = 1; reload(); return true; }

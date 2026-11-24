@@ -2183,6 +2183,15 @@ function createCloudAuthService({
   return Object.freeze({
     handle,
     hasSession: () => Boolean(session?.accessToken),
+    /**
+     * 当前登录的工作台账号（用户 2026-11-21：上架记录里不要显示「本机」，要显示账号名字）。
+     * 只读会话里的显示名/登录名，不读平台凭据、不落盘。
+     */
+    currentOperator: () => {
+      const user = currentSessionUser();
+      const name = String(user.display_name || user.login_id || '').trim();
+      return { id: String(user.id || user.user_id || ''), name: name.slice(0, 60), loginId: String(user.login_id || '').slice(0, 120) };
+    },
     ensureSession,
     ensurePermissionsFresh,
     hasPermission,

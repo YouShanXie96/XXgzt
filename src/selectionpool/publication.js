@@ -44,6 +44,8 @@ const FAILURE_CODES = Object.freeze({
   NEEDS_MANUAL_VERIFICATION: '需要人工验证，队列已停止',
   DRIVER_NOT_READY: '上架驱动未接入（需店铺会话驱动或开放平台凭证）',
   PUBLISH_FAILED: '上架失败',
+  PUBLISH_STALL: '上架卡住，已自动中断（可直接重新上架）',
+  PAGE_HUNG: '平台页面无响应，已自动中断（可直接重新上架）',
 });
 
 function versionNumber(value) {
@@ -91,10 +93,14 @@ function createPublicationService({ repo, ctx, emit }) {
     version: 1,
     autoPublish: false,             // 老软件「自动上架」开关：勾上才填发布页；不勾只记录任务
     putInWarehouse: true,           // 放进仓库 · 不立即上架（auctionStatus = -5）
+    useWorkbenchPrice: false,       // 勾上=按工作台价格上架，同行价公式置灰不生效（用户 2026-11-21）
     priceFactor: '1',
     priceOffset: '1',
     priceDirection: 'subtract',
-    shopCategoryIds: {},            // profileId -> number[]
+    shopCategoryIds: {},            // 旧版：profileId -> number[]（平台类目，已不再使用，保留兼容）
+    shopCategoryNames: {},          // profileId -> string[]（卖家「店铺中分类」名称，可多选）
+    skuTemplateId: 0,               // 本批套用的 SKU 模板（宣传规格），0=不套用
+    detailTemplateId: 0,            // 本批套用的详情页模板，0=不套用
     intervalMs: 3000,
     updatedAt: '',
   });
@@ -106,14 +112,26 @@ function createPublicationService({ repo, ctx, emit }) {
 
   async function saveConfig(input = {}) {
     const next = { ...(await config()) };
-    for (const key of ['autoPublish', 'putInWarehouse', 'intervalMs']) {
+    for (const key of ['autoPublish', 'putInWarehouse', 'useWorkbenchPrice', 'intervalMs']) {
       if (input[key] !== undefined) next[key] = key === 'intervalMs' ? Math.max(0, Math.min(60000, Number(input[key]) || 0)) : Boolean(input[key]);
     }
     for (const key of ['priceFactor', 'priceOffset']) if (input[key] !== undefined) next[key] = String(input[key]).slice(0, 12);
     if (input.priceDirection === 'add' || input.priceDirection === 'subtract') next.priceDirection = input.priceDirection;
+    for (const key of ['skuTemplateId', 'detailTemplateId']) {
+      if (input[key] !== undefined) next[key] = Math.max(0, Number(input[key]) || 0);
+    }
     if (input.shopCategoryIds && typeof input.shopCategoryIds === 'object') next.shopCategoryIds = input.shopCategoryIds;
+    if (input.shopCategoryNames && typeof input.shopCategoryNames === 'object') next.shopCategoryNames = input.shopCategoryNames;
     if (input.profileId && Array.isArray(input.shopCategories)) {
+      // 兼容旧调用：数字 ID 仍写进 shopCategoryIds
       next.shopCategoryIds = { ...next.shopCategoryIds, [C.str(input.profileId)]: input.shopCategories.map(Number).filter(n => Number.isSafeInteger(n) && n > 0).slice(0, 20) };
+    }
+    if (input.profileId && Array.isArray(input.shopCategoryNameList)) {
+      // 用户 2026-11-21：店铺分类 = 卖家后台「店铺中分类」，按名字保存（可多选）
+      next.shopCategoryNames = {
+        ...next.shopCategoryNames,
+        [C.str(input.profileId)]: input.shopCategoryNameList.map(v => C.str(v).slice(0, 40)).filter(Boolean).slice(0, 20),
+      };
     }
     next.updatedAt = now().toISOString();
     await writeJson(CONFIG_FILE, next);
@@ -122,6 +140,8 @@ function createPublicationService({ repo, ctx, emit }) {
 
   /** 老软件「同行价 × 倍数 减/加 金额」：这里按分为单位算，保留两位小数。 */
   function applyPrice(priceFen, cfg = null) {
+    // 勾「工作台价格」时不套用同行价公式：价格用草稿里工作台已保存的规格价。
+    if (cfg?.useWorkbenchPrice === true) return null;
     const base = Number(priceFen);
     if (!Number.isFinite(base) || base <= 0) return null;
     const factor = Number(cfg?.priceFactor ?? 1);
@@ -181,6 +201,13 @@ function createPublicationService({ repo, ctx, emit }) {
     const keyword = C.str(input.keyword).toLowerCase();
     const page = Math.max(1, Number(input.page) || 1);
     const size = Math.max(1, Math.min(50, Number(input.size) || 10));
+    const fallbackOperator = C.str(input.fallbackOperator);
+    // 旧记录的「本机」在界面上显示成当前账号名字（只改展示，不改文件）
+    const displayOperator = row => {
+      const raw = C.str(row.operatorName);
+      if (!raw || raw === '本机') return fallbackOperator || raw || '本机';
+      return raw;
+    };
     let rows = tab === 'failures' ? all.filter(r => r.status === 'failed') : all;
     if (keyword) {
       rows = rows.filter(r => [r.productId, r.title, r.shopName, r.message, r.code, r.operatorName].some(v => String(v || '').toLowerCase().includes(keyword)));
@@ -194,14 +221,22 @@ function createPublicationService({ repo, ctx, emit }) {
     return {
       ok: true, tab, keyword: input.keyword || '', page, size,
       total: rows.length, pages: Math.max(1, Math.ceil(rows.length / size)),
-      rows: rows.slice((page - 1) * size, page * size),
+      rows: rows.slice((page - 1) * size, page * size).map(row => ({ ...row, operatorName: displayOperator(row) })),
       totals,
       // 按员工/组统计成功率（老软件「组长看组员 · 成功率」）：
       // 谁做的上架、成功几次、失败几次、成功率，失败原因 Top3。
+      // 旧记录里操作人存成了「本机」：展示时用当前账号名字代替（不修改历史文件）。
+      fallbackOperator: C.str(input.fallbackOperator),
       byOperator: (() => {
+        const fallback = C.str(input.fallbackOperator);
+        const displayName = row => {
+          const raw = C.str(row.operatorName);
+          if (!raw || raw === '本机') return fallback || raw || '本机';
+          return raw;
+        };
         const map = new Map();
         for (const row of all) {
-          const name = C.str(row.operatorName) || '本机';
+          const name = displayName(row);
           const team = C.str(row.teamName) || '';
           const key = `${team}|${name}`;
           const item = map.get(key) || { operatorName: name, teamName: team, success: 0, failed: 0, attempts: 0, reasons: new Map() };
@@ -365,7 +400,32 @@ function createPublicationService({ repo, ctx, emit }) {
   }
 
   async function queueStop() {
-    return queuePatch({ stopRequested: true, title: '正在停止后续队列…' });
+    return queuePatch({ stopRequested: true, title: '正在停止当前商品…' });
+  }
+
+  /**
+   * 没有执行中的 runner 时把运行态收干净（用户 2026-11-21）。
+   * 上次进程异常退出 / 重启后，队列文件里可能还留着 running=true，
+   * 界面就会一直显示「正在上架 / 正在停止…」，点停止也没反应。
+   */
+  async function recoverStopped(reason = '已手动停止') {
+    return withQueueLock(async () => {
+      const state = await queue();
+      if (!state.running && !state.stopRequested && !state.items.some(r => r.status === 'running')) {
+        return { ok: true, recovered: 0, queue: state };
+      }
+      let recovered = 0;
+      const items = state.items.map(row => {
+        if (row.status !== 'running' && row.status !== 'queued') return row;
+        recovered += 1;
+        return { ...row, status: 'stopped', code: 'STOPPED', message: reason, finishedAt: now().toISOString() };
+      });
+      const lines = [...state.lines, `已清理遗留的运行状态：${recovered} 件标记为已停止`].slice(-120);
+      const next = await writeQueueState({
+        ...state, running: false, stopRequested: false, items, lines, title: '',
+      });
+      return { ok: true, recovered, queue: next };
+    });
   }
 
   function isStopped(queueState) {
@@ -389,7 +449,7 @@ function createPublicationService({ repo, ctx, emit }) {
 
   return {
     config, saveConfig, applyPrice, capture, report, records,
-    queue, queuePatch, queueUpdateItem, queueAppend, queueRemove, queueStop, isStopped, nextQueueId, queueStatsFromItems, resumeTasks,
+    queue, queuePatch, queueUpdateItem, queueAppend, queueRemove, queueStop, recoverStopped, isStopped, nextQueueId, queueStatsFromItems, resumeTasks,
     diagnostic, summarize, fixedIn, RESUME_NOT_A_FAILURE, FAILURE_CODES, API_ENDPOINTS: Object.freeze([
       { method: 'taobao.item.seller.get', use: '入仓后回读商品，确认仓库商品编号', status: 'placeholder' },
       { method: 'taobao.items.inventory.get', use: '列出仓库中商品，避免重复入仓', status: 'placeholder' },

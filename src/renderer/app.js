@@ -1807,12 +1807,8 @@ const hostsBrowser = page => page === 'browser';
     const file=event.dataTransfer?.files?.[0];
     if(!file)return;
     const filePath=window.xx?.pathForFile?.(file)||file.path||'';
-    if(filePath){importComplianceFile(filePath).catch(showError);return;}
-    if(typeof window.xx?.uploadFile==='function'){
-      window.xx.uploadFile(file).then(res=>importComplianceFile(res.path)).catch(showError);
-      return;
-    }
-    toast('拖拽的文件读不到本机路径，请点击“选择文件”。',true);
+    if(!filePath){toast('拖拽的文件读不到本机路径，请点击“选择文件”。',true);return;}
+    importComplianceFile(filePath).catch(showError);
   });
   // 顶部这一排控件已按用户要求隐藏（元素可能不存在），监听要容错。
   $('#add-store')?.addEventListener('click',()=>storeDialog().catch(showError));

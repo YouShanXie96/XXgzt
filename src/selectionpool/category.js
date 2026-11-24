@@ -21,6 +21,10 @@ const CATEGORY_PATH_SEP = ' / ';
 const CATEGORY_TREE_TTL_MS = 7 * 24 * 3600 * 1000;
 const ID_RE = /^\d{2,16}$/;
 const FILE = 'selectionpool/category-cache.json';
+const SHOP_CATS_FILE = 'selectionpool/shop-categories.json';
+const SHOP_CATS_TTL_MS = 7 * 24 * 3600 * 1000;
+// 2 = 从「宝贝分类」页按分类名称列读取（v1 误把日期列当分类名，旧缓存直接作废）
+const SHOP_CATS_VERSION = 2;
 
 const ID_KEYS = ['id', 'catId', 'categoryId', 'cid', 'value', 'key'];
 const NAME_KEYS = ['name', 'catName', 'categoryName', 'text', 'label', 'title'];
@@ -69,6 +73,199 @@ function categoryChildrenScript(parentId) {
     if (res.redirected && /login/.test(res.url)) return { reason: 'login' };
     return { status: res.status, body: String(body || '').slice(0, 600000) };
   } catch (e) { return { reason: 'error', message: String(e && e.message || e).slice(0, 160) }; }
+})()`;
+}
+
+/**
+ * 天猫「宝贝分类」管理页（用户 2026-11-21 指定）：
+ *   https://siteadmin.tmall.com/category/index.htm?showLayout=false
+ *
+ * 这里读的是卖家自己建的店铺分类（一级 + 子分类），登录了就能读，不需要先上架过商品。
+ * 页面是老的站内管理页，结构不公开，所以用三套互相兜底的识别方式：
+ *   A. 管理列表行（tr/li）：行内带「编辑/删除/添加子分类」或复选框 → 取行里的名称；
+ *   B. 类目容器（id/class 含 categor/cat-list）里的 li/a → 取短文本，按 li 嵌套算层级；
+ *   C. 带 data-cat-id / data-id 的节点短文本。
+ * 三套都读不到就返回空 + diag，由调用方退回发布页读法，绝不按标题猜。
+ */
+function shopCategorySiteScript() {
+  return `(async function(){
+  function vis(n){return !!(n&&(n.offsetWidth||n.offsetHeight||n.getClientRects().length));}
+  function txt(n){return String((n&&(n.innerText||n.textContent))||'').replace(/\\u00a0/g,' ').replace(/[ \\t]+/g,' ').replace(/\\s*\\n\\s*/g,' ').trim();}
+  function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  var OUT=[],SEEN={};
+  var BAD=/^(?:编辑|删除|添加|添加子分类|添加下级分类|添加下级|上移|下移|批量|全选|确定|取消|保存|返回|首页|上一页|下一页|搜索|宝贝分类|分类管理|新建分类|新建|添加分类|展开|收起|全部|更多|帮助|客服|消息|设置|操作|序号|分类名称|上级分类|排序|显示|隐藏|移入|移出)$/;
+  // 日期/时间/纯符号都不是分类名（2026-11-24 现场：把「创建时间」列当成了分类）
+  var DATE_LIKE=/^\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2}(?:日)?(?:[ T]\\d{1,2}:\\d{2}(?::\\d{2})?)?$/;
+  var TIME_LIKE=/^\\d{1,2}:\\d{2}(?::\\d{2})?$/;
+  var SYMBOL_ONLY=/^[\\s\\u25b6\\u25c0\\u25bc\\u25b2\\u25ba\\u25c4\\-\\u2014_=+*\\/\\\\|.,:;!?~^<>()\\[\\]{}#@$%&\\u00d7\\u2715\\u2713\\u2714]+$/;
+  function badName(name){
+    if(!name||name.length>30)return true;
+    if(/^\\d+$/.test(name))return true;
+    if(DATE_LIKE.test(name)||TIME_LIKE.test(name))return true;
+    if(SYMBOL_ONLY.test(name))return true;
+    if(BAD.test(name))return true;
+    if(/^(编辑|删除|添加)/.test(name))return true;
+    return false;
+  }
+  function add(name,group,level){
+    name=String(name||'').replace(/\\s+/g,' ').trim();
+    if(badName(name))return;
+    var key=(group||'')+'|'+name;
+    if(SEEN[key])return;
+    SEEN[key]=1;
+    OUT.push({name:name,group:group||'',path:group?group+' / '+name:name,level:level||0});
+  }
+  function ownText(node){
+    var own='';
+    try{
+      for(var i=0;i<node.childNodes.length;i++){
+        var nd=node.childNodes[i];
+        if(nd.nodeType===3)own+=nd.nodeValue;
+      }
+    }catch(e){}
+    return String(own||'').replace(/\\s+/g,' ').trim();
+  }
+  function leftOf(n){
+    var r=null;
+    try{r=n.getBoundingClientRect();}catch(e){}
+    return r?Math.round(r.left):0;
+  }
+  function nameAndX(row){
+    // 分类名一般就在行里的文本框里（截图：分类名称那一列是个 input）
+    var inputs=[];
+    try{inputs=row.querySelectorAll('input[type="text"],input:not([type]),textarea');}catch(e){}
+    for(var q=0;q<inputs.length;q++){
+      var v=String(inputs[q].value||'').trim();
+      if(v&&!badName(v))return {name:v,x:leftOf(inputs[q])};
+    }
+    var cands=[];
+    try{cands=row.querySelectorAll('a,span,td,label,strong,b,em');}catch(e){}
+    for(var i=0;i<cands.length;i++){
+      var c=cands[i];
+      if(!vis(c))continue;
+      var own=ownText(c);
+      if(own&&!badName(own))return {name:own,x:leftOf(c)};
+    }
+    var t=txt(row).replace(/(编辑|删除|添加子分类|添加下级分类|添加下级|上移|下移|批量|确定|取消)/g,' ').replace(/\s+/g,' ').trim();
+    return badName(t)?null:{name:t,x:leftOf(row)};
+  }
+
+  function depthOf(node){
+    var d=0,p=node.parentElement;
+    while(p){var tag=String(p.tagName||'').toLowerCase();if(tag==='li'||tag==='tr')d++;p=p.parentElement;if(d>8)break;}
+    return d;
+  }
+  // A. 管理列表行
+  var rows=[],all=document.querySelectorAll('tr,li');
+  for(var i=0;i<all.length;i++){
+    var n=all[i];
+    if(!vis(n))continue;
+    // 表头行（全选/分类名称/操作）不算分类
+    if(n.querySelector&&n.querySelector('th'))continue;
+    var t=txt(n);
+    if(!t||t.length>120)continue;
+    if(!/(编辑|删除|添加子分类|添加下级|上移|下移)/.test(t)&&!n.querySelector('input[type=checkbox]'))continue;
+    rows.push(n);
+  }
+  rows=rows.filter(function(n){return !rows.some(function(m){return m!==n&&n.contains&&n.contains(m);});});
+  // 子分类比父分类缩进更深：用名称控件的左坐标算层级（现场截图就是树形缩进）
+  var stack=[];
+  for(var r=0;r<rows.length;r++){
+    var info=nameAndX(rows[r]);
+    if(!info)continue;
+    while(stack.length&&stack[stack.length-1].x>=info.x-2)stack.pop();
+    add(info.name, stack.length?stack[stack.length-1].name:'', stack.length);
+    stack.push({x:info.x,name:info.name});
+  }
+  var diag={rows:rows.length,a:OUT.length};
+  // A2. 「宝贝分类」管理表格：只认「分类名称」这一列（用户 2026-11-24 现场：
+  //     之前取每行第一个单元格，结果把「创建时间」那些日期当成了分类名）。
+  //     名称可能是单元格里的 input.value；子分类比父分类缩进更深，用左坐标算层级。
+  if(!OUT.length){
+    var tables=document.querySelectorAll('table');
+    var picked=0;
+    for(var t2=0;t2<tables.length&&picked<3;t2++){
+      var table=tables[t2];
+      if(!vis(table))continue;
+      var allRows=table.querySelectorAll('tr');
+      var headRow=null,colIndex=-1;
+      for(var h=0;h<allRows.length&&!headRow;h++){
+        if(!vis(allRows[h]))continue;
+        var hcells=allRows[h].querySelectorAll('th,td');
+        for(var c=0;c<hcells.length;c++){
+          var ct=String(txt(hcells[c])||'').replace(/\s+/g,'');
+          if(/^(?:分类名称|分类名|宝贝分类|店铺分类)$/.test(ct)||/分类名称/.test(ct)){headRow=allRows[h];colIndex=c;break;}
+        }
+      }
+      if(colIndex<0)continue;
+      picked++;
+      var rows2=[];
+      for(var r2=0;r2<allRows.length;r2++){
+        var tr=allRows[r2];
+        if(tr===headRow||!vis(tr))continue;
+        var cells2=tr.querySelectorAll('td');
+        if(cells2.length<=colIndex)continue;          // 表头行/跨列行不算
+        var cell=cells2[colIndex];
+        var val='';
+        var inp=null;
+        try{inp=cell.querySelector('input[type="text"],input:not([type]),textarea');}catch(e){}
+        if(inp)val=String(inp.value||inp.textContent||'').trim();
+        if(!val)val=String(txt(cell)||'').replace(/\s+/g,' ').trim();
+        // 单元格里常带「添加子分类」这类按钮文字，切掉
+        val=val.replace(/(?:添加子分类|添加下级分类|添加分类|编辑|删除)\s*$/,'').trim();
+        if(!val||val.length>30)continue;
+        if(BAD.test(val))continue;
+        var rect=null;try{rect=cell.getBoundingClientRect();}catch(e){}
+        rows2.push({name:val,x:rect?Math.round(rect.left):0});
+      }
+      // 缩进算层级：x 比栈顶小（更靠左）说明回到上一级
+      var stack=[];
+      for(var k2=0;k2<rows2.length;k2++){
+        var row2=rows2[k2];
+        while(stack.length&&stack[stack.length-1].x>=row2.x-2)stack.pop();
+        add(row2.name, stack.length?stack[stack.length-1].name:'', stack.length);
+        stack.push({x:row2.x,name:row2.name});
+      }
+      diag.tableId=String(table.id||table.className||'').slice(0,40);
+      diag.col=colIndex;
+    }
+    diag.tables=tables.length;
+    diag.a2=OUT.length;
+  }
+  // B. 类目容器里逐层找
+  if(!OUT.length){
+    var zones=[];
+    try{zones=document.querySelectorAll('[id*="categor" i],[class*="categor" i],[id*="cat-list" i],[class*="cat-list" i],[class*="catList"],[id*="catList"]');}catch(e){}
+    for(var z=0;z<zones.length&&OUT.length<200;z++){
+      var zone=zones[z];
+      if(!vis(zone))continue;
+      var nodes=[];
+      try{nodes=zone.querySelectorAll('li,a,span');}catch(e){continue;}
+      for(var q=0;q<nodes.length;q++){
+        var node=nodes[q];
+        if(!vis(node))continue;
+        var own=ownText(node)||(node.tagName==='A'?txt(node):'');
+        if(!own||own.length>30)continue;
+        var lv2=depthOf(node);
+        add(own,'',lv2);
+      }
+    }
+    diag.zones=zones.length;
+    diag.b=OUT.length;
+  }
+  // C. 带分类 id 的节点
+  if(!OUT.length){
+    var labeled=[];
+    try{labeled=document.querySelectorAll('[data-cat-id],[data-category-id],[data-catid]');}catch(e){}
+    for(var d=0;d<labeled.length&&OUT.length<200;d++){
+      var el=labeled[d];
+      if(!vis(el))continue;
+      add(txt(el),'',0);
+    }
+    diag.c=OUT.length;
+  }
+  diag.total=OUT.length;
+  return JSON.stringify({ok:OUT.length>0,items:OUT.slice(0,300),diag:diag,url:String(location.href||'').slice(0,160)});
 })()`;
 }
 
@@ -336,6 +533,167 @@ function createCategoryService({ repo, ctx, taobaoApi, editorStore }) {
 
   function C_list(v) { return Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray(v.item_cat) ? v.item_cat : []; }
 
+  /* ------------------------------------------------------------------
+   * 店铺中分类（卖家自定义分类）——用户 2026-11-21 明确：
+   *   「店铺分类不是店铺类目，是指发布页这里的『店铺中分类』」
+   * 截图上它是一个「选择分类」下拉，选项是店铺自己建的分类（爆单品 / 多金多金→多金T…），可多选。
+   * 来源只有发布页：__SELL_STATE__ 或下拉里的复选框。平台没有对应的开放接口
+   * （taobao.sellercats.list.get 未开通），所以读不到就如实说，不拿平台类目树冒充。
+   * ------------------------------------------------------------------ */
+  let shopCatScriptCache = '';
+  function shopCatOptionsScript() {
+    if (!shopCatScriptCache) {
+      try { shopCatScriptCache = require('./driver-v2').readShopCategoryOptionsScript(); } catch { shopCatScriptCache = ''; }
+    }
+    return shopCatScriptCache;
+  }
+
+  async function shopCatCache() {
+    const data = await readJson(SHOP_CATS_FILE, { version: SHOP_CATS_VERSION, stores: {} });
+    const valid = C.int(data?.version) === SHOP_CATS_VERSION;
+    return {
+      version: SHOP_CATS_VERSION,
+      stores: valid && data && typeof data.stores === 'object' && data.stores ? data.stores : {},
+    };
+  }
+
+  function normalizeShopCatItems(raw) {
+    const list = Array.isArray(raw) ? raw : [];
+    const seen = new Set();
+    const out = [];
+    for (const row of list) {
+      const name = C_str(row?.name || row?.label || row?.text).replace(/\s+/g, ' ').trim();
+      if (!name || name.length > 40 || seen.has(name)) continue;
+      seen.add(name);
+      const group = C_str(row?.group || '').slice(0, 40);
+      out.push({
+        id: C_str(row?.id || row?.value || ''),
+        name,
+        group,
+        path: C_str(row?.path || '') || (group ? `${group}${CATEGORY_PATH_SEP}${name}` : name),
+      });
+    }
+    return out.slice(0, 300);
+  }
+
+  /** 上架时驱动读到的分类列表回写缓存，下次打开设置页不用再开窗口。 */
+  async function rememberShopCategories(storeId, items) {
+    const key = C_str(storeId);
+    const rows = normalizeShopCatItems(items);
+    if (!key || !rows.length) return { ok: false, saved: 0 };
+    const data = await shopCatCache();
+    const old = normalizeShopCatItems(data.stores[key]?.items);
+    // 以本次页面读到的为准（带分组），但折叠起来没读到的旧分类不要丢；
+    // 本次名字没带分组时用旧分组补上，设置页仍然按组展示。
+    const oldByName = new Map(old.map(row => [row.name, row]));
+    const merged = rows.map(row => {
+      const prev = oldByName.get(row.name);
+      const group = row.group || prev?.group || '';
+      return { ...row, group, path: row.path || (group ? `${group}${CATEGORY_PATH_SEP}${row.name}` : row.name) };
+    });
+    const seen = new Set(merged.map(r => r.name));
+    for (const row of old) if (!seen.has(row.name)) { merged.push(row); seen.add(row.name); }
+    data.stores[key] = { at: new Date().toISOString(), items: merged.slice(0, 300) };
+    await writeJson(SHOP_CATS_FILE, data);
+    return { ok: true, saved: merged.length };
+  }
+
+  /**
+   * 读取某店铺的「店铺中分类」选项（用户 2026-11-21 指定来源）：
+   *   主来源：天猫「宝贝分类」管理页 https://siteadmin.tmall.com/category/index.htm?showLayout=false
+   *         —— 只要店铺登录了就能读，不需要先上架过商品；
+   *   兜底：商品发布页「店铺中分类」下拉（万一宝贝分类页结构变了）。
+   * 只读：开隐藏窗口、读列表、关窗口，不点编辑/删除/提交。
+   */
+  async function shopCategories(input = {}) {
+    const storeId = C_str(input.storeId || input.profileId);
+    const refresh = input.refresh === true;
+    if (!storeId) return { ok: false, code: 'BAD_INPUT', message: '请先选择店铺', items: [] };
+    const data = await shopCatCache();
+    const hit = data.stores[storeId];
+    const cachedItems = normalizeShopCatItems(hit?.items);
+    const fresh = hit && Date.now() - Date.parse(hit.at || '') < SHOP_CATS_TTL_MS;
+    if (!refresh && cachedItems.length && fresh) {
+      return { ok: true, storeId, items: cachedItems, source: 'cache', readAt: hit.at };
+    }
+    // 打开「上架设置」时只读缓存：不能每开一次弹窗就开一个隐藏窗口
+    if (!refresh && input.cachedOnly === true) {
+      return cachedItems.length
+        ? { ok: true, storeId, items: cachedItems, source: 'cache-stale', readAt: hit?.at || '' }
+        : { ok: false, code: 'NO_CACHE', storeId, items: [], message: '还没有读到这家店铺的店铺中分类，点「刷新」读取' };
+    }
+    if (typeof ctx.probePage !== 'function') {
+      return {
+        ok: false, code: 'PROBE_UNAVAILABLE', storeId, items: cachedItems,
+        message: '本机读取店铺中分类未就绪，请检查店铺登录状态后重试',
+      };
+    }
+    const save = async (items, source) => {
+      data.stores[storeId] = { at: new Date().toISOString(), items };
+      await writeJson(SHOP_CATS_FILE, data);
+      return { ok: true, storeId, items, source, readAt: data.stores[storeId].at };
+    };
+    // ① 天猫宝贝分类管理页
+    let siteDiag = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let res = null;
+      try {
+        res = await ctx.probePage({
+          storeId,
+          url: 'https://siteadmin.tmall.com/category/index.htm?showLayout=false',
+          script: shopCategorySiteScript(),
+          timeoutMs: 40000,
+          waitMs: attempt === 0 ? 2500 : 4500,
+        });
+      } catch (error) {
+        siteDiag = `宝贝分类页读取失败：${C_str(error?.message || error).slice(0, 100)}`;
+        continue;
+      }
+      if (res?.reason === 'login') {
+        return { ok: false, code: 'LOGIN', storeId, items: cachedItems, message: '店铺登录已失效，读不到店铺分类；请先在「店铺登录」重新登录这家店铺' };
+      }
+      let parsed = res;
+      if (typeof res === 'string') { try { parsed = JSON.parse(res); } catch { parsed = null; } }
+      const items = normalizeShopCatItems(parsed?.items);
+      if (items.length) return save(items, 'siteadmin');
+      siteDiag = parsed?.diag ? `宝贝分类页识别明细 ${JSON.stringify(parsed.diag)}` : '宝贝分类页没有识别到分类';
+    }
+    // ② 兜底：商品发布页「店铺中分类」下拉
+    let catId = ID_RE.test(C_str(input.catId)) ? C_str(input.catId) : '';
+    if (!catId && Number(input.itemId) > 0) {
+      const detail = await repo.detail(Number(input.itemId)).catch(() => null);
+      const fromDetail = C_str(detail?.listing?.categoryId || detail?.categoryId || detail?.snapshot?.category_id);
+      if (ID_RE.test(fromDetail)) catId = fromDetail;
+    }
+    const script = shopCatOptionsScript();
+    const url = `https://sell.publish.tmall.com/tmall/publish.htm${catId ? `?catId=${catId}` : ''}`;
+    let last = { ok: false, code: 'EMPTY', storeId, items: cachedItems, message: siteDiag || '没有读到店铺分类' };
+    if (!script) return cachedItems.length ? { ...last, items: cachedItems } : last;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let res = null;
+      try {
+        res = await ctx.probePage({ storeId, url, script, timeoutMs: 45000, waitMs: attempt === 0 ? 3000 : 5000 });
+      } catch (error) {
+        last = { ok: false, code: 'PROBE_FAILED', storeId, items: cachedItems, message: `读取店铺分类失败：${C_str(error?.message || error).slice(0, 100)}` };
+        continue;
+      }
+      if (res?.reason === 'login') {
+        return { ok: false, code: 'LOGIN', storeId, items: cachedItems, message: '店铺登录已失效，读不到店铺分类；请先在「店铺登录」重新登录这家店铺' };
+      }
+      let parsed = res;
+      if (typeof res === 'string') { try { parsed = JSON.parse(res); } catch { parsed = null; } }
+      const items = normalizeShopCatItems(parsed?.items);
+      if (items.length) return save(items, 'publish');
+      last = {
+        ok: false, code: parsed?.reason || 'EMPTY', storeId, items: cachedItems,
+        message: siteDiag
+          ? `${siteDiag}；发布页备用读法也没读到（${parsed?.reason || 'empty'}）`
+          : `没读到店铺分类（${parsed?.reason || 'empty'}）；请在店铺后台确认「宝贝分类」里有分类后再点「刷新」`,
+      };
+    }
+    return cachedItems.length ? { ...last, items: cachedItems } : last;
+  }
+
   /** 按 ID 拼完整路径 / 按名称搜叶子类目。 */
   async function lookup(input = {}) {
     const data = await cache();
@@ -367,7 +725,11 @@ function createCategoryService({ repo, ctx, taobaoApi, editorStore }) {
     { method: 'tmall.brandcat.control.get', use: '校验店铺是否有该类目发布权限', status: 'placeholder' },
   ]);
 
-  return { normalizeCaptureCategory, readSource, children, lookup, save, parseChildren, pathOf, indexLevels, API_ENDPOINTS, CATEGORY_PATH_SEP };
+  return {
+    normalizeCaptureCategory, readSource, children, lookup, save, parseChildren, pathOf, indexLevels, API_ENDPOINTS, CATEGORY_PATH_SEP,
+    // 店铺中分类（卖家自定义分类）：设置页读选项 + 上架后回写缓存
+    shopCategories, rememberShopCategories, normalizeShopCatItems,
+  };
 }
 
-module.exports = { createCategoryService, parseChildren, CATEGORY_PATH_SEP };
+module.exports = { createCategoryService, parseChildren, CATEGORY_PATH_SEP, shopCategorySiteScript };

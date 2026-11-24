@@ -66,7 +66,16 @@ function createSelectionPoolService(ctx, options = {}) {
 
   /** 当前操作人 / 团队：上品记录的「按员工统计成功率」用它归类。 */
   function operatorName() {
-    return C.str(ctx.userName || ctx.accountName || ctx.operatorName || '').slice(0, 60) || '本机';
+    // 用户 2026-11-21：这里要显示对应账号名字，不能一律写「本机」。
+    // 顺序：工作台登录账号显示名 → 传入的用户名 → Windows 登录账号 → 本机
+    const fromLogin = (() => {
+      try { return C.str(ctx.currentOperatorName?.()); } catch { return ''; }
+    })();
+    const fromCtx = C.str(ctx.userName || ctx.accountName || ctx.operatorName || '');
+    const fromWindows = (() => {
+      try { return C.str(ctx.currentAccount?.()); } catch { return ''; }
+    })();
+    return (fromLogin || fromCtx || fromWindows || '本机').slice(0, 60);
   }
   function teamName() {
     return C.str(ctx.teamName || ctx.team || '').slice(0, 60);
@@ -260,6 +269,31 @@ function createSelectionPoolService(ctx, options = {}) {
   let activeQueueRunner = null;
   let activeRunId = '';
   let activeLogLine = null;
+  /**
+   * 当前正在执行的上架批次中断开关（用户 2026-11-21：「正在上架的产品没有办法停止」）。
+   * 停止按钮置 stopped 并调 driver.cancel() 销毁发布窗口，当前这件商品当场中断；
+   * 看门狗也用它：连续很久没有新日志（页面卡住）就按卡住处理，不再无限等。
+   */
+  let activeAbort = null;
+  const PUBLISH_STALL_MS = 180 * 1000;      // 连续 3 分钟没有任何新日志 → 判卡住
+  const PUBLISH_MAX_MS = 25 * 60 * 1000;    // 单件商品硬上限
+
+  function driverStep() {
+    try { return typeof driver?.currentStep === 'function' ? String(driver.currentStep() || '') : ''; } catch { return ''; }
+  }
+
+  /** 请求中断当前批次：置标记 + 立刻销毁发布窗口（挂着的页面脚本会马上失败）。 */
+  function requestStop(reason = '已手动停止', kind = 'manual') {
+    if (!activeAbort) return { ok: false, running: false };
+    if (!activeAbort.stopped) {
+      activeAbort.stopped = true;
+      activeAbort.reason = String(reason || '已手动停止');
+      activeAbort.kind = kind === 'stall' ? 'stall' : 'manual';
+      try { activeAbort.onStop?.(); } catch { /* */ }
+    }
+    try { driver?.cancel?.(activeAbort.reason); } catch { /* */ }
+    return { ok: true, running: true, step: driverStep() };
+  }
 
   /**
    * 与老软件一致的三段推进：作图 → 入仓 → 回填。
@@ -338,6 +372,8 @@ function createSelectionPoolService(ctx, options = {}) {
 
     const logLine = async (line, context = {}) => {
       lines.push(line);
+      // 心跳不算「有新进展」：否则页面真卡住时看门狗永远等不到超时
+      if (activeAbort && context?.heartbeat !== true) activeAbort.lastProgressAt = Date.now();
       await repo.appendAutoShelfLog({ runId, line, context }).catch(() => undefined);
       await publication.queuePatch({ lines: lines.slice(-120), title: line.slice(0, 120) }).catch(() => undefined);
       emit({ module: 'selectionpool', stage: 'log', message: line, done: true, transient: true, runId });
@@ -345,7 +381,34 @@ function createSelectionPoolService(ctx, options = {}) {
 
     activeRunId = runId;
     activeLogLine = logLine;
+    const abort = {
+      stopped: false, reason: '', onStop: null,
+      startedAt: Date.now(), lastProgressAt: Date.now(), itemStartedAt: 0,
+    };
+    activeAbort = abort;
     const results = [];
+    // 心跳：每 40 秒留一行「还在做什么」，页面慢的时候不会再像死机；
+    // 心跳不刷新 lastProgressAt，真卡住时看门狗照样能判出来。
+    const heartbeat = setInterval(() => {
+      if (abort.stopped) return;
+      const step = driverStep();
+      const secs = Math.round((Date.now() - abort.startedAt) / 1000);
+      void logLine(`⏱ 已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒${step ? ` · 当前步骤：${step}` : ''}（页面没有新进展时，连续 ${Math.round(PUBLISH_STALL_MS / 1000)} 秒会自动中断并说明原因）`, { heartbeat: true });
+    }, 40000);
+    // 看门狗：超过 2.5 分钟没有任何新日志，或单件超过 25 分钟，直接中断这件商品。
+    // 以前页面被平台弹窗卡住时，停止按钮和队列都只能干等。
+    const watchdog = setInterval(() => {
+      if (abort.stopped) return;
+      const idle = Date.now() - abort.lastProgressAt;
+      // 25 分钟上限按「单件商品」算，不是整批：一批 10 件跑一小时不该被误杀
+      const total = abort.itemStartedAt ? Date.now() - abort.itemStartedAt : 0;
+      const step = driverStep();
+      if (total > PUBLISH_MAX_MS) {
+        requestStop(`上架超时：这件商品已经跑了 ${Math.round(total / 60000)} 分钟${step ? `（最后步骤：${step}）` : ''}，已自动中断；可直接重新上架这件商品`, 'stall');
+      } else if (idle > PUBLISH_STALL_MS) {
+        requestStop(`上架卡住：连续 ${Math.round(idle / 1000)} 秒没有新进展${step ? `（最后步骤：${step}）` : ''}，已自动中断；可直接重新上架这件商品`, 'stall');
+      }
+    }, 5000);
 
     const runLoop = async () => {
       let stepIndex = 0;
@@ -353,6 +416,11 @@ function createSelectionPoolService(ctx, options = {}) {
       try {
         while (true) {
           const currentQueue = await publication.queue();
+          if (abort.stopped) {
+            await logLine(`已停止：${abort.reason || '手动停止'}（未开始的排队商品不再执行）`);
+            interrupted = true;
+            break;
+          }
           if (publication.isStopped(currentQueue)) {
             await logLine('已手动停止队列');
             interrupted = true;
@@ -372,6 +440,8 @@ function createSelectionPoolService(ctx, options = {}) {
 
           await publication.queueUpdateItem(nextRow.queueId, { status: 'running', startedAt: started });
           await publication.queuePatch({ title: `${shop.name} · 选品#${itemId}` });
+          abort.lastProgressAt = Date.now();
+          abort.itemStartedAt = Date.now();
           await logLine(`${label} 拉取详情…`, { poolItemId: itemId, shopProfileId: storeId, startedAt: started });
           progress('autoShelf', `[${stepIndex}/${totalNow}] 正在处理选品 #${itemId}`, { index: stepIndex - 1, current: stepIndex, total: totalNow });
 
@@ -396,12 +466,18 @@ function createSelectionPoolService(ctx, options = {}) {
               throw Object.assign(new Error('缺少类目 path/categoryId，跳过：请在「参数」页点「采集」或选叶子类目'), { code: 'MISSING_CATEGORY' });
             }
             const price = publication.applyPrice(detail.product?.priceFen, cfg);
-            if (price && (price.factor !== 1 || price.offset)) {
+            if (cfg?.useWorkbenchPrice) {
+              await logLine(`${label} 上架价格：按「工作台价格」上架（不套用同行价公式）`, { poolItemId: itemId, code: 'PRICE_WORKBENCH' });
+            } else if (price && (price.factor !== 1 || price.offset)) {
               await logLine(`${label} 上架价格：同行价 ¥${(price.before / 100).toFixed(2)} → ¥${(price.after / 100).toFixed(2)}`, { poolItemId: itemId, code: 'REPRICE' });
             }
             let publishDraft = draft;
-            const draftSkus = C.list(draft?.skus).filter(s => !s.removed);
-            if (draftSkus.length && cfg) {
+            // 上架设置里选的模板：先补宣传规格 / 详情页固定图，再按价格规则重算
+            if (publishDraft && (cfg?.skuTemplateId || cfg?.detailTemplateId)) {
+              publishDraft = await applyBatchTemplates(publishDraft, cfg, logLine, label);
+            }
+            const draftSkus = C.list(publishDraft?.skus).filter(s => !s.removed);
+            if (draftSkus.length && cfg && !cfg.useWorkbenchPrice) {
               const rule = {
                 factor: C.str(cfg.priceFactor || '1') || '1',
                 amount: C.str(cfg.priceOffset || '0') || '0',
@@ -410,7 +486,8 @@ function createSelectionPoolService(ctx, options = {}) {
               const repriced = C.repriceSkus(draftSkus, rule);
               if (repriced.summary.changed) {
                 await logLine(`${label} ${C.describeReprice(repriced.formula, repriced.summary)}`, { poolItemId: itemId, code: 'REPRICE_SKU' });
-                publishDraft = { ...draft, skus: repriced.skus };
+                // 注意用 publishDraft 展开：直接用 draft 会把这批套用的模板图/规格丢掉
+                publishDraft = { ...publishDraft, skus: repriced.skus };
               }
             }
             if (publishDraft && (C.list(publishDraft.attrs).length || C.list(publishDraft.skus).length)) {
@@ -428,13 +505,27 @@ function createSelectionPoolService(ctx, options = {}) {
             if (derived.length) {
               await logLine(`${label} 必填提议 ${derived.length} 项（${[...new Set(derived.map(h => h.source))].join('/')}）：${derived.slice(0, 4).map(h => `${h.name}=${h.value}`).join('、')}`, { poolItemId: itemId, code: 'REQUIRED_HINTS' });
             }
-            const published = await driver.publish({
+            const publishTask = driver.publish({
               detail, draft: publishDraft, shop, storeId, taobaoApi, categoryId, categoryPath, config: cfg, price,
               hints, pictureSpace,
+              shouldStop: () => abort.stopped,
               log: line => { void logLine(`${label} ${String(line || '').slice(0, 300)}`, { poolItemId: itemId, shopProfileId: storeId, stage: 'publish' }); },
             });
+            publishTask.catch(() => undefined);
+            // 与「停止」竞速：停止按钮/看门狗一置标记就立刻返回，不再等驱动自己跑完
+            // （页面被平台弹窗卡住时，那个 promise 可能永远不会结束）。
+            const stopSignal = new Promise((_resolve, reject) => {
+              abort.onStop = () => reject(Object.assign(new Error(abort.reason || '已手动停止上架'), { code: 'STOPPED' }));
+            });
+            stopSignal.catch(() => undefined);
+            const published = await Promise.race([publishTask, stopSignal]);
+
             if (!published?.warehouseItemId) throw new Error(published?.message || '填充完成但未确认入仓');
             warehouseItemId = C.str(published.warehouseItemId);
+            // 把本次发布页真实读到的「店铺中分类」写回缓存，设置页下次打开就有完整选项
+            if (Array.isArray(published.shopCategories) && published.shopCategories.length) {
+              await categoryService.rememberShopCategories(storeId, published.shopCategories.map(name => ({ name }))).catch(() => undefined);
+            }
             await repo.update(itemId, { flow: C.FLOW_STATES.TOFILL, warehouseItemId, shopProfileId: storeId }, detail.version);
             await repo.appendShelfRecord({ runId, itemId, productId: detail.product?.id, shopId: storeId, shopName: shop.name, warehouseItemId, status: 'success', at: new Date().toISOString() });
             await logLine(`${label} 已放入仓库 #${warehouseItemId}`, { poolItemId: itemId, shopProfileId: storeId, productId: detail.product?.id, finishedAt: new Date().toISOString(), code: 'OK' });
@@ -450,6 +541,28 @@ function createSelectionPoolService(ctx, options = {}) {
               finishedAt: new Date().toISOString(),
             });
           } catch (error) {
+            // 手动停止 / 看门狗中断：当前商品当场结束，不计「上架失败」，也不登记人工补全任务
+            if (String(error?.code || '') === 'STOPPED' || abort.stopped) {
+              const reason = abort.reason || String(error?.message || '') || '已手动停止';
+              const stalled = abort.kind === 'stall';
+              await logLine(`${label} ${stalled ? '已自动中断' : '已停止'}：${reason}`, { poolItemId: itemId, shopProfileId: storeId, code: stalled ? 'PUBLISH_STALL' : 'STOPPED', finishedAt: new Date().toISOString() });
+              if (stalled) {
+                // 卡住要能在「失败排查」里查到原因，但不登记人工补全（窗口已关闭，重新上架即可）
+                await publication.capture({
+                  runId, itemId, productId: detail?.product?.id, title: detail?.product?.title,
+                  shopName: shop.name, shopId: storeId, status: 'failed', code: 'PUBLISH_STALL',
+                  message: reason, reasonKey: reason, operatorName: operatorName(), teamName: teamName(),
+                }).catch(() => undefined);
+              }
+              await publication.queueUpdateItem(nextRow.queueId, {
+                status: 'stopped', code: stalled ? 'PUBLISH_STALL' : 'STOPPED', message: String(reason).slice(0, 300),
+                title: C.str(detail?.product?.title).slice(0, 120),
+                finishedAt: new Date().toISOString(),
+              }).catch(() => undefined);
+              results.push({ itemId, ok: false, stopped: true, code: stalled ? 'PUBLISH_STALL' : 'STOPPED', message: reason });
+              interrupted = true;
+              break;
+            }
             const { code, summary } = C.classifyFailure(error?.message);
             const finalCode = C.str(error?.code) && C.str(error.code) !== 'UNKNOWN' ? C.str(error.code) : code;
             const message = C.str(error?.message || error);
@@ -491,23 +604,30 @@ function createSelectionPoolService(ctx, options = {}) {
           }
         }
         const okCount = results.filter(r => r.ok).length;
-        const failCount = results.filter(r => !r.ok).length;
-        await logLine(`自动上架结束：成功 ${okCount} / 失败 ${failCount} / 合计 ${results.length + stoppedCount}`);
+        const failCount = results.filter(r => !r.ok && !r.stopped).length;
+        const stopCount = results.filter(r => r.stopped).length;
+        await logLine(`自动上架结束：成功 ${okCount} / 失败 ${failCount}${stopCount ? ` / 已停止 ${stopCount}` : ''} / 合计 ${results.length + stoppedCount}`);
       } finally {
+        clearInterval(heartbeat);
+        clearInterval(watchdog);
+        activeAbort = null;
         activeQueueRunner = null;
         activeRunId = '';
         activeLogLine = null;
-        await publication.queuePatch({ running: false });
+        // stopRequested 必须一起清掉：否则界面按钮会永远停在「正在停止…」
+        await publication.queuePatch({ running: false, stopRequested: false, title: '' }).catch(() => undefined);
         const okCount = results.filter(r => r.ok).length;
-        const failCount = results.filter(r => !r.ok).length;
-        progressEnd('autoShelf', `上架处理结束：成功 ${okCount} 条，失败 ${failCount} 条`, {});
+        const failCount = results.filter(r => !r.ok && !r.stopped).length;
+        const stopCount = results.filter(r => r.stopped).length;
+        progressEnd('autoShelf', `上架处理结束：成功 ${okCount} 条，失败 ${failCount} 条${stopCount ? `，已停止 ${stopCount} 条` : ''}`, {});
       }
       return {
         ok: true,
         runId,
         results,
         success: results.filter(r => r.ok).length,
-        failed: results.filter(r => !r.ok).length,
+        failed: results.filter(r => !r.ok && !r.stopped).length,
+        stopped: results.filter(r => r.stopped).length,
       };
     };
 
@@ -972,22 +1092,97 @@ function createSelectionPoolService(ctx, options = {}) {
     return { ok: true, draft: saved, changed, matched, applied: true, message: `已整理 ${changed} 条规格名` };
   }
 
-  /** SKU 模板：宣传规格插到最上面。 */  async function editorSkuTemplate(input = {}) {
+  /**
+   * 模板里的宣传规格 → 规格行（用户 2026-11-21：SKU 模板必须从已保存的模板里选，
+   * 没配模板就明确报错，绝不偷偷塞一套默认宣传语）。
+   * 价格优先用模板自己的，没有就沿用第一个真实规格的价格。
+   */
+  function templateSkuRows(tpl, firstRealSku) {
+    const base = firstRealSku || {};
+    return C.list(tpl?.skus).map((row, index) => {
+      const name = `${C.str(row?.name)}${C.str(row?.suffix)}`.trim().slice(0, 128);
+      const price = C.str(row?.price) || C.str(base.price) || '';
+      return {
+        key: `tpl-${Date.now().toString(36)}-${index}`,
+        name,
+        price,
+        stock: C.str(row?.stock) || '1000',
+        image: C.str(row?.image),
+        template: true,
+        added: true,
+        sourceSkuId: C.str(base.sourceSkuId || base.key || ''),
+        originalName: '',
+        originalPrice: price,
+      };
+    }).filter(row => row.name);
+  }
+
+  /** SKU 模板：按选中的模板把宣传规格插到最上面。 */
+  async function editorSkuTemplate(input = {}) {
     const itemId = C.int(input.itemId);
     const detail = await repo.detail(itemId);
     const draft = (await editorStore.ensure(itemId, detail)).draft;
-    const names = C.strList(input.names);
-    const preset = names.length ? names : [
-      '【天猫TOP级商家】只做优质产品 权威保障',
-      '【第三方食品安全检测】品质保障 放心购',
-      '【天猫TOP级店铺】金牌1对1专属服务 购物全程无忧',
-    ];
     const firstReal = C.list(draft.skus).find(s => !s.template && !s.removed);
-    const templateRows = C.buildTemplateRows(preset, firstReal || detail.skus?.[0]);
+    let templateRows = [];
+    let templateName = '';
+    if (input.templateId) {
+      const tpl = (await repo.listTemplates('sku')).find(t => C.int(t.id) === C.int(input.templateId));
+      if (!tpl) throw Object.assign(new Error('模板不存在或已删除，请刷新后重试'), { code: 'TEMPLATE_NOT_FOUND' });
+      templateRows = templateSkuRows(tpl, firstReal || detail.skus?.[0]);
+      templateName = tpl.name;
+    } else {
+      const names = C.strList(input.names);
+      if (!names.length) {
+        throw Object.assign(new Error('请先选择一个 SKU 模板；还没有模板就到上品库「图片模板」里新建'), { code: 'NO_TEMPLATE' });
+      }
+      templateRows = C.buildTemplateRows(names, firstReal || detail.skus?.[0]);
+    }
+    if (!templateRows.length) throw new Error('这个模板里没有可插入的宣传规格');
     const next = await editorStore.save(itemId, detail.product?.id, {
       skus: cleanSkuRows([...templateRows, ...C.list(draft.skus)]).slice(0, 600),
     });
-    return { ok: true, draft: next, added: templateRows.length };
+    return { ok: true, draft: next, added: templateRows.length, templateName };
+  }
+
+  /**
+   * 上架设置里选的模板（用户 2026-11-21）：给本批草稿补 SKU 宣传规格 / 详情页固定图。
+   * 已有同名规格、同一张详情图都不重复加；模板被删了就只记一行日志，不拦上架。
+   */
+  async function applyBatchTemplates(draft, cfg, log, label) {
+    const next = { ...draft, skus: C.list(draft.skus), detailImages: C.list(draft.detailImages) };
+    if (cfg?.skuTemplateId) {
+      const tpl = (await repo.listTemplates('sku')).find(t => C.int(t.id) === C.int(cfg.skuTemplateId));
+      if (!tpl) {
+        await log(`${label} SKU 模板已不存在（#${cfg.skuTemplateId}），本批跳过`);
+      } else {
+        const firstReal = next.skus.find(row => !row.removed && !row.template);
+        const rows = templateSkuRows(tpl, firstReal);
+        const exists = new Set(next.skus.map(row => C.str(row.name).trim()));
+        const fresh = rows.filter(row => !exists.has(row.name));
+        if (fresh.length) {
+          next.skus = cleanSkuRows([...fresh, ...next.skus]).slice(0, 600);
+          await log(`${label} 已套用 SKU 模板「${tpl.name}」：新增 ${fresh.length} 条宣传规格`, { poolItemId: draft.itemId, code: 'SKU_TEMPLATE' });
+        } else {
+          await log(`${label} SKU 模板「${tpl.name}」的宣传规格都已在规格表里，跳过`);
+        }
+      }
+    }
+    if (cfg?.detailTemplateId) {
+      const tpl = (await repo.listTemplates('detail')).find(t => C.int(t.id) === C.int(cfg.detailTemplateId));
+      if (!tpl) {
+        await log(`${label} 详情页模板已不存在（#${cfg.detailTemplateId}），本批跳过`);
+      } else {
+        const images = C.strList(tpl.images);
+        const fresh = images.filter(url => !next.detailImages.includes(url));
+        if (fresh.length) {
+          next.detailImages = [...fresh, ...next.detailImages].slice(0, 40);
+          await log(`${label} 已套用详情页模板「${tpl.name}」：插入 ${fresh.length} 张`, { poolItemId: draft.itemId, code: 'DETAIL_TEMPLATE' });
+        } else {
+          await log(`${label} 详情页模板「${tpl.name}」的图都已在详情页里，跳过`);
+        }
+      }
+    }
+    return next;
   }
 
   /** 编码提交：把主图/第5张/SKU 编码记入绑定；SKU 编码里的图尝试插进规格表。 */
@@ -1619,11 +1814,23 @@ function createSelectionPoolService(ctx, options = {}) {
     appendAutoShelfLog: p => repo.appendAutoShelfLog(p || {}),
     queueState: () => publication.queue(),
     queueStatus: () => publication.queue(),
-    queueStop: () => publication.queueStop(),
+    queueStop: async () => {
+      // 先中断当前商品（销毁发布窗口），再落 stopRequested —— 顺序反了会出现
+      // 「按钮变成正在停止，但商品还在跑」的空窗期。
+      requestStop('已手动停止');
+      const state = await publication.queueStop();
+      if (!activeQueueRunner) {
+        // 没有执行中的批次（上次异常退出留下的 running=true）：直接把运行态收干净
+        const recovered = await publication.recoverStopped();
+        return recovered?.queue || state;
+      }
+      return state;
+    },
     setQueueState: p => publication.queuePatch(p || {}),
     // 上品记录 / 失败记录（点「失败 N · 查看」）
-    publicationReport: p => publication.report(p || {}),
-    publicationDiagnostic: p => publication.report({ ...(p || {}), tab: 'failures', size: 50 }),
+    // fallbackOperator：老记录里存成「本机」的，展示时用当前账号名字代替（不修改历史文件）
+    publicationReport: p => publication.report({ ...(p || {}), fallbackOperator: operatorName() }),
+    publicationDiagnostic: p => publication.report({ ...(p || {}), tab: 'failures', size: 50, fallbackOperator: operatorName() }),
     resumeTasks: () => publication.resumeTasks(),
     // 自动上架配置（目标店铺、放进仓库、上架价格、店铺分类、队列间隔）
     autoShelfConfig: () => publication.config(),
@@ -1634,6 +1841,8 @@ function createSelectionPoolService(ctx, options = {}) {
     categoryLookup: p => categoryService.lookup(p || {}),
     categorySave: p => categoryService.save(p || {}),
     categoryParse: p => ({ ok: true, items: categoryService.parseChildren(p?.payload) }),
+    // 店铺中分类（卖家自定义分类）：读取该店发布页「选择分类」里的选项
+    shopCategories: p => categoryService.shopCategories(p || {}),
     uploadTasks: () => repo.listUploadTasks(),
     createUploadTasks: p => repo.createUploadTasks(p || {}),
     // 图片模板

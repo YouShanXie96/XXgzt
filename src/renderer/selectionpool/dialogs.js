@@ -29,24 +29,77 @@
     { id: 'logistics', label: '物流与售后', required: false },
   ];
 
-  const TIPS = '勾选「自动上架」后，按选品的类目和参数一件件填好发布页，放进店铺仓库（不会直接开卖）。店铺品牌用各店铺在该类目的授权品牌；上架遇验证码时弹出店铺窗口并暂停，请人工完成验证，不会自动重传或重复提交。不勾选则只记录任务。';
-
   function create(deps) {
-    const { api, esc, svg, toast, render, state, data, reload, openShopPage, registerManualFixes, button, navigate } = deps;
+    const { api, esc, svg, toast, render: hostRender, state, data, reload, openShopPage, registerManualFixes, button, navigate } = deps;
+
+    /**
+     * 日志滚动位置（用户 2026-11-24）：
+     *  - 整页重绘会换掉 DOM，滚动条跳回顶部 → 重绘前后记住并恢复；
+     *  - 在底部时新日志自动跟到最新；用户自己往上翻过就保持原位置，不再被拉回底部。
+     * 重绘来源不止本模块（顶部进度事件也会重绘整页），所以除了包 render 之外，
+     * 再挂一个 MutationObserver：日志节点一换就立刻恢复（在浏览器绘制前，用户看不到跳动）。
+     */
+    let logView = { top: 0, atBottom: true, has: false };
+    let logNode = null;
+    function bindLogNode(el) {
+      if (!el || el.dataset.followBound) return;
+      el.dataset.followBound = '1';
+      const stopFollow = () => { ui.progress.autoFollow = false; };
+      el.addEventListener('wheel', stopFollow, { passive: true });
+      el.addEventListener('touchstart', stopFollow, { passive: true });
+      el.addEventListener('scroll', () => {
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+        if (!atBottom) ui.progress.autoFollow = false;
+        logView = { top: el.scrollTop, atBottom, has: true };
+      }, { passive: true });
+    }
+    function restoreLogScroll() {
+      if (ui.name !== 'queueProgress' && ui.name !== 'autoShelf') return;
+      const el = document.querySelector('[data-spx-log]');
+      if (!el) { logNode = null; return; }
+      bindLogNode(el);
+      if (el !== logNode) {
+        logNode = el;
+        if (ui.progress.autoFollow) el.scrollTop = el.scrollHeight;
+        else if (logView.has) el.scrollTop = logView.atBottom ? el.scrollHeight : logView.top;
+        return;
+      }
+      if (ui.progress.autoFollow) el.scrollTop = el.scrollHeight;
+    }
+    function captureLogScroll() {
+      const el = document.querySelector('[data-spx-log]');
+      if (!el) { logView = { top: 0, atBottom: true, has: false }; return; }
+      logView = {
+        top: el.scrollTop,
+        atBottom: el.scrollHeight - el.scrollTop - el.clientHeight <= 24,
+        has: true,
+      };
+    }
+    function render() {
+      captureLogScroll();
+      hostRender();
+      restoreLogScroll();
+    }
 
     // 详情缓存：同一件商品 2 分钟内再打开直接用（老软件也是缓存后秒开）
     const detailCache = new Map();
 
     const ui = {
       name: '', busy: false, message: '',
-      shelf: { itemIds: [], shops: new Set(), config: null, queue: null, pickKeyword: '', shopCats: {}, showTips: false },
-      progress: { queue: null, logs: [], resume: null, logAll: false, selectedQueueIds: new Set() },
+      shelf: { itemIds: [], shops: new Set(), config: null, queue: null, pickKeyword: '', shopCats: {}, shopCatState: {}, shopcatOpen: '', templates: { sku: [], detail: [] }, showTips: false },
+      progress: { queue: null, logs: [], resume: null, logAll: false, autoFollow: false, selectedQueueIds: new Set() },
       pub: { tab: 'failures', keyword: '', page: 1, size: 6, data: null, expanded: '', resume: null, shelfRecords: [], itemId: 0 },
       form: { itemId: 0, detail: null, section: 'basic', fields: [], categoryId: '', categoryPath: '', warehouseItemId: '', message: '' },
       detail: { itemId: 0, tab: 'overview', data: null, busy: false, error: '', imageIndex: 0 },
       cat: { itemId: 0, profileId: '', keyword: '', levels: [[], [], []], ids: ['', '', ''], picked: null, hits: [], busy: false, message: '', productId: '', personal: null },
       logs: { runs: [], runId: '', busy: false, error: '' },
     };
+
+    try {
+      const observer = new MutationObserver(() => restoreLogScroll());
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch { /* 老环境没有 MutationObserver */ }
+    window.setInterval(() => { if (ui.name === 'queueProgress') restoreLogScroll(); }, 500);
 
     const shops = () => (data().shopStates?.stores || []);
     const loggedIn = () => (data().shopStates?.loggedIn || []);
@@ -77,10 +130,17 @@
 
     // ---------------------------------------------------------------- 数据加载
     async function refreshShelf() {
-      const [q, config] = await Promise.all([
+      const [q, config, templates] = await Promise.all([
         api('selectionpool.queueStatus', {}).catch(() => null),
         api('selectionpool.autoShelfConfig', {}).catch(() => null),
+        api('selectionpool.imageTemplates', {}).catch(() => []),
       ]);
+      if (Array.isArray(templates)) {
+        ui.shelf.templates = {
+          sku: templates.filter(t => t.kind === 'sku'),
+          detail: templates.filter(t => t.kind === 'detail'),
+        };
+      }
       if (q) {
         ui.shelf.queue = q;
         ui.progress.queue = q;
@@ -91,6 +151,42 @@
         for (const row of loggedIn()) ui.shelf.shops.add(row.storeId);
       }
       render();
+      // 缓存里有就直接带出来；没有也不主动开窗口（等用户点「刷新」）
+      void loadShelfCats();
+    }
+
+    /**
+     * 店铺中分类（卖家自定义分类，用户 2026-11-21）：
+     * 先读本机缓存（上面架过一次就有），点「刷新」才用店铺登录态开隐藏窗口读发布页。
+     */
+    let catLoading = false;
+    async function loadShelfCats({ refresh = false, ids = [] } = {}) {
+      const targets = (ids.length ? ids : [...ui.shelf.shops]).filter(Boolean);
+      if (!targets.length) return;
+      if (catLoading && !refresh) return;
+      catLoading = true;
+      let changed = false;
+      try {
+        for (const id of targets) {
+          if (!refresh && (ui.shelf.shopCats[id] || []).length) continue;
+          ui.shelf.shopCatState = { ...ui.shelf.shopCatState, [id]: { busy: true, error: '' } };
+          changed = true;
+          if (refresh) render();
+          const res = await api('selectionpool.shopCategories', {
+            storeId: id, refresh, cachedOnly: !refresh, itemId: ui.shelf.itemIds[0] || 0,
+          }).catch(error => ({ ok: false, message: String(error?.message || error) }));
+          const items = Array.isArray(res?.items) ? res.items : [];
+          if (items.length) ui.shelf.shopCats = { ...ui.shelf.shopCats, [id]: items };
+          ui.shelf.shopCatState = {
+            ...ui.shelf.shopCatState,
+            // 还没缓存过不算错误，面板里会提示点「刷新」，不用红字吓人
+            [id]: { busy: false, error: res?.ok || res?.code === 'NO_CACHE' ? '' : (res?.message || '没读到这家店铺的「店铺中分类」') },
+          };
+        }
+      } finally {
+        catLoading = false;
+        if (changed) render();
+      }
     }
 
     async function refreshProgress() {
@@ -213,6 +309,7 @@
         }
         void refreshShelf();
       } else if (name === 'queueProgress') {
+        ui.progress.autoFollow = true;
         void refreshProgress();
       } else if (name === 'publication') {
         const nextTab = ['failures', 'records', 'logs', 'operators'].includes(payload.tab) ? payload.tab : 'failures';
@@ -264,6 +361,7 @@
     }
 
     function previewPriceText(c) {
+      if (c?.useWorkbenchPrice) return '按工作台价格上架 · 不套用同行价公式';
       const f = Number(c?.priceFactor ?? 1);
       const o = Number(c?.priceOffset ?? 0);
       const factor = Number.isFinite(f) && f > 0 ? Math.min(f, 100) : 1;
@@ -394,31 +492,83 @@
             </section>
 
             <section class="spx-card">
-              <div class="spx-card-h"><b>3. 店铺中分类</b><span>选填 · 每家店铺单独记忆</span></div>
+              <div class="spx-card-h"><b>3. 店铺中分类</b><span>选填 · 每家店铺单独记忆 · 可多选</span></div>
               ${[...chosen].length ? [...chosen].map(id => {
                 const s = list.find(x => x.storeId === id) || { name: id };
                 const options = (ui.shelf.shopCats[id] || []);
-                const saved = (c.shopCategoryIds || {})[id];
-                const selectedId = String(Array.isArray(saved) ? (saved[0] || '') : (saved || ''));
-                return `<div class="spx-shopcat-row"><span>${esc(s.name || id)}</span>
-                  <select class="spx-select" data-action="selectionpool:dlg-shelf-shopcat" data-id="${esc(id)}"><option value="">未设置（上架时自动带出）</option>${options.map(o => `<option value="${esc(o.id)}" ${String(o.id) === selectedId ? 'selected' : ''}>${esc(o.path || o.name)}</option>`).join('')}</select>
-                  <button type="button" class="button small" data-action="selectionpool:dlg-shelf-shopcat-refresh" data-id="${esc(id)}">刷新</button></div>`;
+                const savedNames = Array.isArray((c.shopCategoryNames || {})[id]) ? (c.shopCategoryNames || {})[id] : [];
+                const open = ui.shelf.shopcatOpen === id;
+                const catState = ui.shelf.shopCatState[id] || {};
+                const picked = savedNames.length
+                  ? `<b>已选 ${savedNames.length} 个</b>：${esc(savedNames.join('、'))}`
+                  : '<span class="dim">未设置（上架时不选店铺中分类）</span>';
+                const groups = new Map();
+                for (const o of options) {
+                  const g = String(o.group || '');
+                  if (!groups.has(g)) groups.set(g, []);
+                  groups.get(g).push(o);
+                }
+                return `<div class="spx-shopcat-block">
+                  <div class="spx-shopcat-row">
+                    <span class="spx-shopcat-shop">${esc(s.name || id)}</span>
+                    <button type="button" class="spx-shopcat-toggle ${open ? 'on' : ''}" data-action="selectionpool:dlg-shopcat-toggle" data-id="${esc(id)}" title="展开/收起本店可选的「店铺中分类」">
+                      <span class="spx-shopcat-current">${picked}</span><em>${open ? '▲' : '▼'}</em>
+                    </button>
+                    <button type="button" class="button small" data-action="selectionpool:dlg-shelf-shopcat-refresh" data-id="${esc(id)}" ${catState.busy ? 'disabled' : ''}>${catState.busy ? '读取中…' : '刷新'}</button>
+                  </div>
+                  ${open ? `<div class="spx-shopcat-panel">
+                    ${catState.busy ? '<p class="spx-note">正在读取本店分类…</p>' : ''}
+                    ${catState.error ? `<p class="spx-note spx-error">${esc(catState.error)}</p>` : ''}
+                    ${options.length ? [...groups.entries()].map(([group, rows]) => `<div class="spx-shopcat-group">
+                      ${group ? `<div class="spx-shopcat-group-h">${esc(group)}</div>` : ''}
+                      ${rows.map(o => `<label class="spx-shopcat-opt"><input type="checkbox" data-action="selectionpool:dlg-shopcat-pick" data-id="${esc(id)}" data-name="${esc(o.name)}" ${savedNames.includes(o.name) ? 'checked' : ''}><span>${esc(o.name)}</span></label>`).join('')}
+                    </div>`).join('') : (catState.busy ? '' : '<p class="spx-note">点「刷新」读取本店分类</p>')}
+                    <div class="spx-shopcat-foot"><span class="spacer"></span>
+                      <button type="button" class="link-button" data-action="selectionpool:dlg-shopcat-clear" data-id="${esc(id)}">清空本店分类</button></div>
+                  </div>` : ''}
+                </div>`;
               }).join('') : '<p class="spx-note">请先在上方勾选目标店铺，即可按店铺设置默认分类。</p>'}
             </section>
 
             <section class="spx-card">
               <div class="spx-card-h"><b>4. 上架价格规则</b><em class="spx-price-eg" data-spx-price-eg>${esc(previewPriceText(c))}</em></div>
-              <div class="spx-price-inline">
+              <label class="spx-price-check">
+                <input type="checkbox" data-action="selectionpool:dlg-shelf-config" data-key="useWorkbenchPrice" ${c.useWorkbenchPrice ? 'checked' : ''}>
+                <span>使用工作台价格</span>
+                <em>勾选后不套用同行价公式，按工作台里已保存的价格上架</em>
+              </label>
+              <div class="spx-price-inline ${c.useWorkbenchPrice ? 'is-disabled' : ''}">
                 <span>同行价 ×</span>
-                <input class="spx-input mini" data-shelf-price="priceFactor" value="${esc(c.priceFactor || '1')}" aria-label="价格倍数">
-                <select class="spx-select mini" data-action="selectionpool:dlg-shelf-config" data-key="priceDirection" aria-label="减或加"><option value="subtract" ${c.priceDirection !== 'add' ? 'selected' : ''}>减</option><option value="add" ${c.priceDirection === 'add' ? 'selected' : ''}>加</option></select>
-                <input class="spx-input mini" data-shelf-price="priceOffset" value="${esc(c.priceOffset || '1')}" aria-label="价格金额">
+                <input class="spx-input mini" data-shelf-price="priceFactor" value="${esc(c.priceFactor || '1')}" aria-label="价格倍数" ${c.useWorkbenchPrice ? 'disabled' : ''}>
+                <select class="spx-select mini" data-action="selectionpool:dlg-shelf-config" data-key="priceDirection" aria-label="减或加" ${c.useWorkbenchPrice ? 'disabled' : ''}><option value="subtract" ${c.priceDirection !== 'add' ? 'selected' : ''}>减</option><option value="add" ${c.priceDirection === 'add' ? 'selected' : ''}>加</option></select>
+                <input class="spx-input mini" data-shelf-price="priceOffset" value="${esc(c.priceOffset || '1')}" aria-label="价格金额" ${c.useWorkbenchPrice ? 'disabled' : ''}>
                 <span>元</span>
               </div>
-              <p class="spx-price-note">默认套用到本批未单独调价的规格（支持两位小数）；工作台内已改价的规格以工作台为准。</p>
+              <p class="spx-price-note">${c.useWorkbenchPrice
+                ? '当前按工作台价格上架：使用商品工作台里保存的规格价格，不再计算同行价。'
+                : '默认套用到本批未单独调价的规格（支持两位小数）；工作台内已改价的规格以工作台为准。'}</p>
             </section>
 
-            <div class="spx-info spx-info-compact">${svg('info')}<span>${esc(TIPS)}</span></div>
+            <section class="spx-card">
+              <div class="spx-card-h"><b>5. 套用模板</b><span>选填 · 本批统一套用</span></div>
+              <div class="spx-tpl-row">
+                <span>SKU 模板</span>
+                <select class="spx-select" data-action="selectionpool:dlg-shelf-config" data-key="skuTemplateId" aria-label="SKU 模板">
+                  <option value="0">不使用</option>
+                  ${(ui.shelf.templates.sku || []).map(t => `<option value="${esc(t.id)}" ${Number(c.skuTemplateId) === Number(t.id) ? 'selected' : ''}>${esc(t.name || '未命名模板')}（${(t.skus || []).length} 条）</option>`).join('')}
+                </select>
+                ${(ui.shelf.templates.sku || []).length ? '' : '<em class="spx-tpl-empty">还没有模板，可在上品库「图片模板」里新建</em>'}
+              </div>
+              <div class="spx-tpl-row">
+                <span>详情页模板</span>
+                <select class="spx-select" data-action="selectionpool:dlg-shelf-config" data-key="detailTemplateId" aria-label="详情页模板">
+                  <option value="0">不使用</option>
+                  ${(ui.shelf.templates.detail || []).map(t => `<option value="${esc(t.id)}" ${Number(c.detailTemplateId) === Number(t.id) ? 'selected' : ''}>${esc(t.name || '未命名模板')}（${(t.images || []).length} 张）</option>`).join('')}
+                </select>
+                ${(ui.shelf.templates.detail || []).length ? '' : '<em class="spx-tpl-empty">还没有模板，可在上品库「图片模板」里新建</em>'}
+              </div>
+            </section>
+
           </div>
 
           <div class="spx-setup-right">
@@ -534,8 +684,8 @@
         </div>
 
         <div class="spx-foot">
-          <span class="spx-hint">右侧可单选、多选或全选「排队中」的商品移出排队；点「后台运行」可收起窗口不影响队列执行。</span>
-          <button type="button" class="button small" data-action="selectionpool:dlg-shelf-stop" ${q.running && !q.stopRequested ? '' : 'disabled'}>${q.stopRequested ? '正在停止…' : '停止后续队列'}</button>
+          <span class="spx-hint">右侧可单选、多选或全选「排队中」的商品移出排队；点「停止上架」会立刻中断当前商品并关闭发布窗口；点「后台运行」可收起窗口不影响队列执行。</span>
+          <button type="button" class="button small" data-action="selectionpool:dlg-shelf-stop" ${q.running && !q.stopRequested ? '' : 'disabled'}>${q.stopRequested ? '正在停止…' : '停止上架'}</button>
           <button type="button" class="button small" data-action="selectionpool:dlg-open-settings">新增排队 / 上架设置</button>
           <button type="button" class="button primary small" data-action="selectionpool:dlg-close">后台运行</button>
         </div>
@@ -1086,13 +1236,32 @@
           // 仅由 handleChange 处理，避免点击复选框被触发两次
           return true;
         }
+        case 'shopcat-pick': {
+          // 店铺中分类的多选框：只在 handleChange 里保存，避免 click + change 重复写配置
+          return true;
+        }
         case 'shelf-shopcat-refresh': {
-          const result = await api('selectionpool.categoryChildren', { profileId: target.dataset.id, parentId: '', refresh: true }).catch(() => null);
-          toast(result?.ok ? `已刷新：${(result.items || []).length} 个一级类目` : (result?.message || '店铺分类暂不可用'), !result?.ok);
-          if (result?.ok) {
-            ui.shelf.shopCats = { ...ui.shelf.shopCats, [target.dataset.id]: result.items.map(n => ({ id: n.id, name: n.name, path: n.name })) };
-            render();
-          }
+          const storeId = String(target.dataset.id || '');
+          ui.shelf.shopcatOpen = storeId;
+          await loadShelfCats({ refresh: true, ids: [storeId] });
+          const rows = ui.shelf.shopCats[storeId] || [];
+          const error = ui.shelf.shopCatState[storeId]?.error;
+          toast(rows.length ? `已读到 ${rows.length} 个「店铺中分类」` : (error || '没读到店铺中分类，可到店铺发布页确认这一项'), !rows.length);
+          return true;
+        }
+        case 'shopcat-toggle': {
+          const storeId = String(target.dataset.id || '');
+          ui.shelf.shopcatOpen = ui.shelf.shopcatOpen === storeId ? '' : storeId;
+          render();
+          if (ui.shelf.shopcatOpen && !(ui.shelf.shopCats[storeId] || []).length) void loadShelfCats({ ids: [storeId] });
+          return true;
+        }
+        case 'shopcat-clear': {
+          const storeId = String(target.dataset.id || '');
+          const next = await api('selectionpool.saveAutoShelfConfig', { profileId: storeId, shopCategoryNameList: [] }).catch(() => null);
+          if (next) { ui.shelf.config = next; toast('已清空这家店铺的店铺中分类'); }
+          else toast('清空失败，请重试', true);
+          render();
           return true;
         }
         case 'shelf-log-more': ui.progress.logAll = !ui.progress.logAll; render(); return true;
@@ -1108,8 +1277,10 @@
           return true;
         }
         case 'shelf-stop': {
-          await api('selectionpool.queueStop', {}).catch(() => null);
-          toast('已请求停止后续队列（当前这一单会跑完）');
+          // 用户 2026-11-21：点停止必须马上停，不是「跑完这一单再停」
+          const res = await api('selectionpool.queueStop', {}).catch(() => null);
+          toast(res && res.running === false ? '已停止上架：当前商品已中断，排队商品不再执行' : '已停止上架：当前商品正在中断…');
+          if (res) applyQueue(res);
           await refreshProgress(); return true;
         }
         case 'shelf-start': {
@@ -1339,6 +1510,20 @@
     function handleChange(event) {
       const t = event.target;
       if (!t?.dataset) return false;
+      if (t.dataset.action === 'selectionpool:dlg-shopcat-pick') {
+        // 店铺中分类多选：把该店当前所有勾选的名字整体保存（勾/取消都走这里）
+        const storeId = String(t.dataset.id || '');
+        const names = Array.from(document.querySelectorAll('[data-action="selectionpool:dlg-shopcat-pick"]'))
+          .filter(box => String(box.dataset.id || '') === storeId && box.checked)
+          .map(box => String(box.dataset.name || ''))
+          .filter(Boolean);
+        void api('selectionpool.saveAutoShelfConfig', { profileId: storeId, shopCategoryNameList: names }).then(next => {
+          if (next) ui.shelf.config = next;
+          render();
+          toast(names.length ? `已记住店铺中分类：${names.join('、')}` : '已清除这家店铺的店铺中分类');
+        }).catch(() => toast('店铺中分类保存失败，请重试', true));
+        return true;
+      }
       if (t.dataset.queueSelect !== undefined) {
         const qid = String(t.dataset.queueSelect || '');
         if (qid) {
@@ -1373,6 +1558,8 @@
         const key = t.dataset.id;
         t.checked ? ui.shelf.shops.add(key) : ui.shelf.shops.delete(key);
         render();
+        // 新勾上的店铺：缓存里有店铺中分类就直接带出来（不主动开窗口）
+        if (t.checked) void loadShelfCats({ ids: [key] });
         return true;
       }
       if (action === 'selectionpool:dlg-shelf-config') {
@@ -1382,21 +1569,6 @@
           if (next) ui.shelf.config = next;
           render();
         }).catch(() => undefined);
-        return true;
-      }
-      if (action === 'selectionpool:dlg-shelf-shopcat') {
-        const profileId = String(t.dataset.id || '');
-        const picked = String(t.value || '');
-        if (!profileId) return true;
-        void api('selectionpool.saveAutoShelfConfig', {
-          profileId, shopCategories: picked ? [Number(picked)] : [],
-        }).then(next => {
-          if (next) {
-            ui.shelf.config = next;
-            const row = (ui.shelf.shopCats[profileId] || []).find(o => String(o.id) === picked);
-            toast(picked ? `已记住店铺分类：${row?.path || row?.name || picked}` : '已清除店铺分类');
-          } else toast('店铺分类保存失败，请重试', true);
-        }).catch(() => toast('店铺分类保存失败，请重试', true));
         return true;
       }
       if (action === 'selectionpool:dlg-cat-source' || action === 'selectionpool:dlg-shelf-shopcat-refresh') {
@@ -1455,7 +1627,7 @@
       const stopBtn = document.querySelector('[data-spx="queueProgress"] [data-action="selectionpool:dlg-shelf-stop"]');
       if (stopBtn) {
         stopBtn.disabled = !(q.running && !q.stopRequested);
-        stopBtn.textContent = q.stopRequested ? '正在停止…' : '停止后续队列';
+        stopBtn.textContent = q.stopRequested ? '正在停止…' : '停止上架';
       }
 
       const side = document.querySelector('[data-spx-side]');
@@ -1478,12 +1650,26 @@
       const logCount = document.querySelector('[data-spx-log-count]');
       const lines = Array.isArray(q.lines) ? q.lines : [];
       if (logCount) logCount.textContent = `${lines.length} 行`;
-      if (logEl && lines.length) {
-        const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
-        const savedTop = logEl.scrollTop;
-        const slice = ui.progress.logAll ? lines.slice(-600) : lines.slice(-80);
-        logEl.innerHTML = slice.map(line => `<div>${esc(line)}</div>`).join('');
-        logEl.scrollTop = atBottom ? logEl.scrollHeight : savedTop;
+      if (logEl) {
+        // 用户自己往上翻过就别再把他拉回底部（wheel/拖动滚动条都算）
+        if (!logEl.dataset.followBound) {
+          logEl.dataset.followBound = '1';
+          const stopFollow = () => { ui.progress.autoFollow = false; };
+          logEl.addEventListener('wheel', stopFollow, { passive: true });
+          logEl.addEventListener('touchstart', stopFollow, { passive: true });
+          logEl.addEventListener('scroll', () => {
+            if (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight > 40) ui.progress.autoFollow = false;
+          }, { passive: true });
+        }
+        if (lines.length) {
+          const atBottom = ui.progress.autoFollow
+            || logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+          const savedTop = logEl.scrollTop;
+          const slice = ui.progress.logAll ? lines.slice(-600) : lines.slice(-80);
+          logEl.innerHTML = slice.map(line => `<div>${esc(line)}</div>`).join('');
+          logEl.scrollTop = atBottom ? logEl.scrollHeight : savedTop;
+          ui.progress.autoFollow = false;
+        }
       }
     }
 

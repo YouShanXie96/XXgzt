@@ -309,6 +309,8 @@ function createSelectionPoolRepository(ctx) {
       image: C.str(item?.image).slice(0, 800),
       name: C.str(item?.name).slice(0, 200),
       suffix: C.str(item?.suffix).slice(0, 80),
+      price: C.str(item?.price).slice(0, 20),
+      stock: C.str(item?.stock).slice(0, 20),
     }));
   }
 
