@@ -261,13 +261,23 @@ function createSelectionPoolRepository(ctx) {
   const listShelfRecords = async () => C.list((await read(FILES.shelf, { records: [] }))?.records);
 
   // ---- 自动上架日志（按 runId 落盘，重启可恢复） ----
+  /**
+   * 追加执行日志。用户 2026-11-25：日志里会缺行（[fill-sku]/[fill-logistics] 整行不见），
+   * 原因是并发「读-改-写」互相覆盖 —— 上一行还没写回，下一行已经读到旧文件。
+   * 这里串成一条队列，保证每行都落盘。
+   */
+  let logWriteChain = Promise.resolve();
   async function appendAutoShelfLog(entry = {}) {
-    const data = await read(FILES.logs, { lines: [] });
-    const lines = C.list(data?.lines);
-    lines.push({ ...entry, t: C.str(entry.t) || new Date().toISOString() });
-    const trimmed = lines.length > AUTO_SHELF_LOG_LIMIT ? lines.slice(-AUTO_SHELF_LOG_LIMIT) : lines;
-    await write(FILES.logs, { lines: trimmed });
-    return { ok: true, total: trimmed.length };
+    const job = async () => {
+      const data = await read(FILES.logs, { lines: [] });
+      const lines = C.list(data?.lines);
+      lines.push({ ...entry, t: C.str(entry.t) || new Date().toISOString() });
+      const trimmed = lines.length > AUTO_SHELF_LOG_LIMIT ? lines.slice(-AUTO_SHELF_LOG_LIMIT) : lines;
+      await write(FILES.logs, { lines: trimmed });
+      return { ok: true, total: trimmed.length };
+    };
+    logWriteChain = logWriteChain.then(job, job);
+    return logWriteChain;
   }
   const listAutoShelfLog = async () => C.list((await read(FILES.logs, { lines: [] }))?.lines);
 
