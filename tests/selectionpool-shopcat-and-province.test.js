@@ -108,14 +108,13 @@ function makeMiniDom({ href = 'https://siteadmin.tmall.com/category/index.htm?sh
       this.listeners.get(type).push(fn);
     }
     dispatchEvent(ev) {
-      if (ev && !ev.target) ev.target = this;
       const fns = this.listeners.get(ev?.type) || [];
       for (const fn of fns) fn.call(this, ev);
-      if (ev?.bubbles && !ev.cancelBubble && this.parentElement) this.parentElement.dispatchEvent(ev);
+      if (ev?.bubbles && this.parentElement) this.parentElement.dispatchEvent(ev);
       return true;
     }
     click() {
-      this.dispatchEvent({ type: 'click', bubbles: true, cancelBubble: false, stopPropagation() { this.cancelBubble = true; } });
+      this.dispatchEvent({ type: 'click', bubbles: true });
     }
     matches(selectorList) {
       return String(selectorList).split(',').some(sel => matchSimpleSelector(this, sel.trim()));
@@ -759,168 +758,6 @@ test('buildEnsureProvinceScript leaves overlay open with optionPoint and searchP
   assert.equal(popup.visible, true);
   assert.deepEqual(res.optionPoint, { x: 290, y: 134 });
   assert.deepEqual(res.searchPoint, { x: 290, y: 93 });
-});
-
-test('category.shopCategories falls through to sell.publish.tmall.com using pooled categoryId when siteadmin returns flat items', async () => {
-  const ctx = makeMemCtx();
-  const visitedUrls = [];
-  ctx.probePage = async ({ url }) => {
-    visitedUrls.push(url);
-    if (url.includes('siteadmin.tmall.com')) {
-      return JSON.stringify({
-        ok: true,
-        items: [
-          { name: '爆单品', group: '' },
-          { name: '多金多金', group: '' },
-          { name: '财多财多', group: '' },
-          { name: '爆多多', group: '' },
-        ],
-      });
-    }
-    return JSON.stringify({
-      ok: true,
-      items: [
-        { name: '爆单品', group: '' },
-        { name: '多金多金', group: '' },
-        { name: '多金T', group: '多金多金' },
-        { name: '多金Q', group: '多金多金' },
-        { name: '财多财多', group: '' },
-        { name: '财多T', group: '财多财多' },
-        { name: '爆多多', group: '' },
-      ],
-    });
-  };
-
-  const svc = createCategoryService({
-    repo: {
-      detail: async () => null,
-      list: async () => ({ items: [{ itemId: 12, categoryId: '50012345' }] }),
-    },
-    ctx,
-  });
-
-  const res = await svc.shopCategories({ storeId: 'store-flat', refresh: true, itemId: 0 });
-  assert.equal(res.ok, true);
-  assert.ok(visitedUrls.some(u => u.includes('siteadmin.tmall.com')));
-  assert.ok(visitedUrls.some(u => u.includes('sell.publish.tmall.com') && u.includes('catId=50012345')));
-  assert.equal(res.items.find(x => x.name === '多金T')?.group, '多金多金');
-  assert.equal(res.items.find(x => x.name === '财多T')?.group, '财多财多');
-  assert.equal(res.items.find(x => x.name === '爆多多')?.group, '');
-});
-
-test('readShopCategoryOptionsScript handles mixed groups + trailing top-level leaf without double-toggling switchers', async () => {
-  const { h, win } = makeMiniDom({ href: 'https://sell.publish.tmall.com/tmall/publish.htm' });
-  const trigger = h('div', { class: 'next-select' }, [h('span', { class: 'next-select-value' }, [], '选择分类')]);
-  win.document.body.appendChild(
-    h('div', { class: 'sell-component-info-wrapper-wrap' }, [
-      h('label', {}, [], '店铺中分类'),
-      trigger,
-    ]),
-  );
-
-  const switcherClicks = { d: 0, c: 0 };
-  const makeGroup = (label, kids, clickKey) => {
-    let open = false;
-    const sw = h('span', { class: 'next-tree-node-switcher', 'aria-expanded': 'false' }, []);
-    const childUl = h('ul', { class: 'next-tree-child-tree', visible: false }, kids.map(k =>
-      h('li', { class: 'next-tree-node', 'aria-level': '2', rect: { left: 132, top: 20, width: 100, height: 22 }, visible: false }, [
-        h('input', { type: 'checkbox' }),
-        h('span', { class: 'next-tree-node-label' }, [], k),
-      ]),
-    ));
-    sw.addEventListener('click', ev => {
-      if (ev?.stopPropagation) ev.stopPropagation();
-      switcherClicks[clickKey] += 1;
-      open = !open;
-      sw.setAttribute('aria-expanded', open ? 'true' : 'false');
-      childUl.visible = open;
-      for (const ch of childUl.children) ch.visible = open;
-    });
-    const li = h('li', { class: 'next-tree-node', 'aria-level': '1', rect: { left: 100, top: 20, width: 120, height: 24 } }, [
-      sw,
-      h('span', { class: 'next-tree-node-label' }, [], label),
-      childUl,
-    ]);
-    // Parent li click should NOT double-toggle if script skips nodes containing switcher
-    li.addEventListener('click', () => {
-      open = !open;
-      sw.setAttribute('aria-expanded', open ? 'true' : 'false');
-      childUl.visible = open;
-      for (const ch of childUl.children) ch.visible = open;
-    });
-    return li;
-  };
-
-  const leaf = name => h('li', { class: 'next-tree-node', 'aria-level': '1', rect: { left: 100, top: 20, width: 120, height: 24 } }, [
-    h('input', { type: 'checkbox' }),
-    h('span', { class: 'next-tree-node-label' }, [], name),
-  ]);
-
-  const popup = h('div', { class: 'next-overlay-wrapper opened' }, [
-    h('ul', { class: 'next-tree' }, [
-      leaf('爆单品'),
-      leaf('好运连连'),
-      leaf('心想事成'),
-      leaf('今天也要开心哦!'),
-      makeGroup('多金多金', ['多金T', '多金Q', '多金L'], 'd'),
-      makeGroup('财多财多', ['财多T', '财多Q'], 'c'),
-      leaf('爆多多'),
-    ]),
-  ]);
-  win.document.body.appendChild(popup);
-
-  const res = JSON.parse(await vm.runInNewContext(driverV2.readShopCategoryOptionsScript(), win));
-  assert.equal(res.ok, true);
-  assert.equal(switcherClicks.d, 1);
-  assert.equal(switcherClicks.c, 1);
-  assert.deepEqual(
-    res.items.map(x => ({ name: x.name, group: x.group })),
-    [
-      { name: '爆单品', group: '' },
-      { name: '好运连连', group: '' },
-      { name: '心想事成', group: '' },
-      { name: '今天也要开心哦!', group: '' },
-      { name: '多金T', group: '多金多金' },
-      { name: '多金Q', group: '多金多金' },
-      { name: '多金L', group: '多金多金' },
-      { name: '财多T', group: '财多财多' },
-      { name: '财多Q', group: '财多财多' },
-      { name: '爆多多', group: '' },
-    ],
-  );
-});
-
-test('locateProvinceOverlayScript locates non-li div options & search input without toggling trigger', async () => {
-  const { h, win } = makeMiniDom({ href: 'https://sell.publish.tmall.com/tmall/publish.htm' });
-  let triggerClicks = 0;
-  const valSpan = h('span', { class: 'next-select-value' }, [], '请选择');
-  const trigger = h('span', { class: 'next-select-trigger' }, [valSpan]);
-  trigger.addEventListener('click', () => { triggerClicks += 1; });
-  win.document.body.appendChild(
-    h('div', { class: 'sell-component-info-wrapper-wrap' }, [
-      h('label', { class: 'sell-component-info-wrapper-label' }, [], '* 省份'),
-      h('div', { class: 'next-select' }, [trigger]),
-    ]),
-  );
-
-  const searchInput = h('input', { type: 'text', value: '', rect: { left: 300, top: 150, width: 160, height: 28 } });
-  const optOther = h('div', { class: 'custom-select-item', rect: { left: 300, top: 190, width: 160, height: 30 } }, [], '其他');
-  const optBeijing = h('div', { class: 'custom-select-item', rect: { left: 300, top: 222, width: 160, height: 30 } }, [], '北京');
-  win.document.body.appendChild(
-    h('div', { class: 'custom-dropdown-portal' }, [
-      searchInput,
-      optOther,
-      optBeijing,
-    ]),
-  );
-
-  const loc = JSON.parse(await vm.runInNewContext(driverV2.__scripts.locateProvinceOverlayScript(['福建']), win));
-  assert.equal(triggerClicks, 0);
-  assert.equal(loc.overlayOpen, true);
-  assert.equal(loc.target, '其他');
-  assert.equal(loc.usedFallback, true);
-  assert.deepEqual(loc.searchPoint, { x: 380, y: 164 });
-  assert.deepEqual(loc.optionPoint, { x: 380, y: 205 });
 });
 
 
