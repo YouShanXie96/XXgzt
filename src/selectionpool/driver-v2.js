@@ -2612,6 +2612,98 @@ function fillSpecValuesScript(values) {
 })()`;
 }
 
+/**
+ * 净含量类字段（产品净含量 / 单件净含量 / 总净含量）：页面是「数字输入 + 单位下拉」两段。
+ * 用户 2026-11-25 现场：把「500g」整串写进了数字框，提交报「输入值 "g" 错误」。
+ * 这里按保质期同款写法拆开：数字写输入框，单位点下拉选。
+ */
+function fillNetContentScript(targets) {
+  const list = JSON.stringify((Array.isArray(targets) ? targets : []).slice(0, 6)
+    .map(t => ({ name: String(t?.name || ''), num: String(t?.num || ''), unit: String(t?.unit || '') }))
+    .filter(t => t.name && t.num));
+  return `(async function(){${NATIVE_SET}
+  var list=${list};
+  function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  function vis(n){return !!(n&&(n.offsetWidth||n.offsetHeight||n.getClientRects().length));}
+  function norm(s){return String(s||'').replace(/[:：*\s（）()【】\[\]]/g,'');}
+  function text(n){return String((n&&(n.innerText||n.textContent))||'').trim();}
+  var docs=xxDocs();
+  var out={filled:[],missed:[]};
+  for(var i=0;i<list.length;i++){
+    var t=list[i];
+    var label=null;
+    for(var d=0;d<docs.length&&!label;d++){
+      var ls=Array.prototype.slice.call(docs[d].querySelectorAll('.sell-component-info-wrapper-label,[class*="info-wrapper-label"],label,th,dt,span,div'))
+        .filter(function(n){return n.children.length<=1&&vis(n)&&norm(text(n)).replace(/(?:重要|推荐|热|新|必填)+$/,'')===norm(t.name);});
+      if(ls.length)label=ls[0];
+    }
+    if(!label){out.missed.push(t.name);continue;}
+    var row=label.closest('[class*="info-wrapper-wrap"],[class*="form-item"],tr,li')||label.parentElement;
+    var scopes=[row,row&&row.nextElementSibling,label.parentElement,label.parentElement&&label.parentElement.parentElement].filter(Boolean);
+    var numInput=null,unitTrig=null;
+    for(var s2=0;s2<scopes.length;s2++){
+      var sc=scopes[s2];if(!sc||!sc.querySelectorAll)continue;
+      if(!numInput){
+        var ins=Array.prototype.slice.call(sc.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio])')).filter(function(x){return vis(x)&&!x.disabled&&!x.readOnly;});
+        var plain=ins.filter(function(x){return !x.closest('.next-select,[class*="select-trigger"]');});
+        numInput=plain[0]||ins[0]||null;
+      }
+      if(!unitTrig){
+        var cand=Array.prototype.slice.call(sc.querySelectorAll('.next-select,[class*="select-trigger"],[class*="measurement-select"],[class*="unit-select"]')).filter(vis);
+        unitTrig=cand.find(function(n){return /单位|克|千克|g|kg|ml|升/i.test(text(n))||/measurement|unit/i.test(String(n.className||''));})||null;
+        if(unitTrig&&unitTrig===numInput)unitTrig=null;
+      }
+    }
+    var written='';
+    if(numInput){
+      for(var k=0;k<2;k++){
+        try{numInput.focus();numInput.select();}catch(e){}
+        var inserted=false;
+        try{inserted=document.execCommand('insertText',false,t.num);}catch(e){inserted=false;}
+        if(!inserted||String(numInput.value||'').trim()!==t.num)xxSetNative(numInput,t.num);
+        await wait(320);
+        if(String(numInput.value||'').trim()===t.num)break;
+      }
+      try{numInput.dispatchEvent(new Event('blur',{bubbles:true}));}catch(e){}
+      written=String(numInput.value||'').trim();
+    }
+    var unitRead='';
+    if(unitTrig&&t.unit&&!/^\\s*$/.test(t.unit)){
+      var cur=text(unitTrig);
+      if(norm(cur)!==norm(t.unit)){
+        try{unitTrig.click();}catch(e){}
+        await wait(380);
+        var hit=null;
+        for(var d2=0;d2<docs.length&&!hit;d2++){
+          var ovs=Array.prototype.slice.call(docs[d2].querySelectorAll('.next-overlay-inner,.next-menu-wrapper,[class*="overlay-inner"],[class*="dropdown-menu"]')).filter(vis);
+          for(var o=0;o<ovs.length&&!hit;o++){
+            var opts=Array.prototype.slice.call(ovs[o].querySelectorAll('.next-menu-item,[role="option"],li,div[class*="option"]')).filter(vis);
+            hit=opts.find(function(n){return norm(text(n))===norm(t.unit);})||null;
+          }
+        }
+        if(hit){try{hit.click();}catch(e){}}
+        await wait(320);
+      }
+      unitRead=text(unitTrig).slice(0,10);
+    }
+    if(written===t.num)out.filled.push({name:t.name,num:written,unit:unitRead||t.unit});
+    else out.missed.push(t.name);
+  }
+  return JSON.stringify(out);
+})()`;
+}
+
+/** 净含量单位归一：克→g、千克/公斤→kg、毫升→ml、升→L */
+function normalizeNetUnit(raw) {
+  const u = String(raw || '').toLowerCase();
+  if (!u) return '';
+  if (/kg|千克|公斤/.test(u)) return 'kg';
+  if (u === 'g' || /克/.test(u)) return 'g';
+  if (/ml|毫升/.test(u)) return 'ml';
+  if (u === 'l' || /升/.test(u)) return 'L';
+  return '';
+}
+
 function focusSpecInputScript() {
   return `(function(){${DOCS_SET}
   var input=xxAll('.next-drawer input').find(function(i){
@@ -2803,22 +2895,25 @@ function fillSkuScript(skus) {
     return na?hit/na:0;
   }
   var skipped=[];
+  var used=[];
   function pickBox(name,index){
     function normName(t){return String(t||'').replace(/[\\s\\u00a0【】\\[\\]()（）:：*·|丨]/g,'').replace(/[\\u{1F300}-\\u{1FAFF}\\u2600-\\u27BF\\uFE0F\\u2705\\u2764]/gu,'');}
     var want=normName(name);
     if(!want)return null;
     var head=want.slice(0,10);
-    var exact=containers.find(function(c){return normName((c.textContent||'').slice(0,200)).indexOf(head)>=0;});
+    // 一条规格只能占一行：否则多条宣传规格会全写进同一行（价格被最后一条覆盖、库存变 0）
+    var free=containers.filter(function(c){return used.indexOf(c)<0;});
+    var exact=free.find(function(c){return normName((c.textContent||'').slice(0,200)).indexOf(head)>=0;});
     if(exact)return exact;
     var best=null,bestScore=0,dup=false;
-    containers.forEach(function(c){
+    free.forEach(function(c){
       var score=overlap(name,(c.textContent||'').slice(0,120));
       if(score>bestScore+0.08){best=c;bestScore=score;dup=false;}
       else if(Math.abs(score-bestScore)<=0.08&&score>=0.5){dup=true;}
     });
     if(!dup&&bestScore>=0.5)return best;
     // 兜底：规格行数与草稿规格数一致时，按顺序对应（天猫表格顺序 = 我们创建规格值的顺序）
-    if(containers.length===rows.length&&index>=0)return containers[index]||null;
+    if(containers.length===rows.length&&index>=0&&used.indexOf(containers[index])<0)return containers[index]||null;
     return null;
   }
   var done=0,missed=[],gaps=[];
@@ -2833,8 +2928,12 @@ function fillSkuScript(skus) {
     var pick=function(re,fallback){return inputs.find(function(i){return re.test(String(i.name||'')+String(i.placeholder||'')+String(i.getAttribute('aria-label')||''));})||inputs[fallback];};
     try{
       if(r.price)xxSetNative(pick(/price|价格/i,0),String(r.price));
-      if(r.stock)xxSetNative(pick(/stock|库存|数量/i,1),String(r.stock));
+      // 库存空/非数字时给 1000（老软件同样有默认 99 的兜底），否则平台留 0 → 上架后不可售
+      var stockVal=String(r.stock==null?'':r.stock).trim();
+      if(!/^\d+$/.test(stockVal))stockVal='1000';
+      xxSetNative(pick(/stock|库存|数量/i,1),stockVal);
       if(r.outerId)xxSetNative(pick(/outer|商家编码|编码/i,2),String(r.outerId));
+      used.push(box);          // 标记已占用，后面的规格不会再写这一行
       done++;
     }catch(e){missed.push(name.slice(0,16));}
   });
@@ -2847,7 +2946,7 @@ function fillSkuScript(skus) {
       if(input&&!String(input.value||'').trim())gaps.push(text.replace(/[:：*\\s]/g,'').slice(0,16));
     }
   });
-  return JSON.stringify({done:done,missed:missed.slice(0,10),gaps:gaps.slice(0,10),total:rows.length});
+  return JSON.stringify({done:done,missed:missed.slice(0,10),gaps:gaps.slice(0,10),total:rows.length,containers:containers.length});
 })()`;
 }
 
@@ -3427,6 +3526,128 @@ function writeProvinceViaStateScript(candidates) {
     }
   }catch(e){}
   return JSON.stringify({ok:false,reason:'state-readback-empty'});
+})()`;
+}
+
+/**
+ * 产地 / 省份 / 城市：直接写发布页 Magix 引擎（老软件 form-capture-publish-recovery.js
+ * 的 buildGeographyScript 同款，2026-11-25 用户现场：采集到「省份=浙江省」，提交时省份仍为空）。
+ *
+ * 为什么不能用点下拉：省份是「产地」级联的子字段（name 形如 p-21299-xxx），
+ * 选项由 /tmall/asyncOpt.htm 懒加载，DOM 里常常只有一个「请选择」。
+ * 老软件的做法：从 getComponentProps('bindProp'|'itemProp').dataSource 里按 label 找到字段，
+ * 用 dataSource 枚举匹配文字，写 {value,text} 到 formValues + itemProp，再 setProps；
+ * 级联字段先 POST 一次表单值把 children 拉回来。找不到省份时回退「其他」。
+ */
+function buildGeographyScript(input = {}) {
+  const want = JSON.stringify({
+    origin: String(input.origin || '中国大陆').trim(),
+    province: String(input.province || '').trim(),
+    city: String(input.city || '').trim(),
+    fallback: String(input.fallback || '').trim(),
+  });
+  return `(async function(){
+  var want=${want},out={ok:false,fields:[],errors:[]};
+  var st=window.__SELL_STATE__&&window.__SELL_STATE__.getState&&window.__SELL_STATE__.getState();
+  if(!st||!st.engine)return JSON.stringify(Object.assign(out,{code:'no-api'}));
+  var eng=st.engine,gcv=st.getComponentValue,gcp=st.getComponentProps;
+  function find(label,parentName){
+    var hits=[];
+    ['bindProp','itemProp'].forEach(function(store){
+      var ds=(gcp(store)||{}).dataSource||[];
+      ds.forEach(function(f){ if(f&&f.label===label)hits.push({store:store,field:f}); });
+    });
+    if(!hits.length)return null;
+    if(parentName){var child=hits.find(function(h){return String(h.field.name||'').indexOf(parentName+'-')===0;});if(child)return child;}
+    return hits.find(function(h){return h.field.required;})||hits[0];
+  }
+  function write(meta,value){
+    var fv=Object.assign({},(eng.getModels()||{}).formValues||{});
+    var current=Object.assign({},gcv(meta.store)||{},fv[meta.store]||{});
+    current[meta.field.name]=value;fv[meta.store]=current;
+    fv.itemProp=Object.assign({},gcv('itemProp')||{},fv.itemProp||{});fv.itemProp[meta.field.name]=value;
+    var cp=gcp(meta.store)||{},desc=Object.assign({},cp,{value:current});
+    var comp=eng.getComponent&&eng.getComponent(meta.store);if(comp&&comp.setProps)comp.setProps(desc);
+    var update={formValues:fv};update[meta.store]=desc;eng.updateModels(update);
+  }
+  async function cascade(meta){
+    if(!meta.field.async||!meta.field.async.childrenUrl)return;
+    var url;
+    try{url=new URL(meta.field.async.childrenUrl,location.href);}catch(e){return;}
+    if(url.origin!==location.origin||url.pathname!='/tmall/asyncOpt.htm')return;
+    var fv=Object.assign({},(eng.getModels()||{}).formValues||{});
+    ['bindProp','itemProp'].forEach(function(k){fv[k]=Object.assign({},fv[k]||{},gcv(k)||{});});
+    var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},15000);
+    try{
+      var response=await fetch(url.href,{method:'POST',credentials:'include',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'jsonBody='+encodeURIComponent(JSON.stringify(fv)),signal:controller.signal});
+      if(!response.ok)throw new Error('cascade-http-'+response.status);
+      var json=await response.json();
+      if(eng.processJson)eng.processJson(json,{isIncremental:true});
+      ['bindProp','itemProp'].forEach(function(k){
+        var model=json.models&&json.models[k];if(!model||!model.dataSource)return;
+        var flat=[];
+        (function flatten(ds){(ds||[]).forEach(function(f){if(/^p-/.test(f.name||''))flat.push(f);else if(Array.isArray(f.dataSource))flatten(f.dataSource);});})(model.dataSource);
+        if(!flat.length)return;
+        var desc=Object.assign({},gcp(k)||{},model,{dataSource:flat,value:fv[k]||{}});
+        var comp=eng.getComponent&&eng.getComponent(k);if(comp&&comp.setProps)comp.setProps(desc);
+        var update={};update[k]=desc;eng.updateModels(update);
+      });
+      var cur=eng.getModels().formValues||{};eng.updateModels({formValues:Object.assign({},cur,fv)});
+    }catch(e){}finally{clearTimeout(timer);}
+  }
+  function bare(x){return String(x||'').replace(/\s+/g,'').replace(/^中国(?=台湾|香港|澳门)/,'').replace(/(?:壮族|回族|维吾尔)?自治区$|特别行政区$|[省市]$/,'');}
+  function pick(options,text){
+    if(!text)return null;
+    var t=String(text);
+    return options.find(function(o){return o&&o.text===t;})
+      ||options.find(function(o){return bare(o&&o.text)&&bare(o.text)===bare(t);})
+      ||(/台湾|香港|澳门/.test(t)?options.find(function(o){return String(o&&o.text||'').indexOf((t.match(/台湾|香港|澳门/)||[''])[0])>=0;}):null)
+      ||null;
+  }
+  function valid(meta){
+    var v=(gcv(meta.store)||{})[meta.field.name];
+    if(!v||v.value==null)return false;
+    return (meta.field.dataSource||[]).some(function(o){return String(o.value)===String(v.value)&&o.text===v.text;});
+  }
+  async function set(label,meta,hit){
+    write(meta,{value:hit.value,text:hit.text});
+    out.fields.push({label:label,name:meta.field.name,text:hit.text});
+    await cascade(meta);
+  }
+  try{
+    var originMeta=find('产地');
+    if(originMeta){
+      var oText=want.origin||((gcv(originMeta.store)||{})[originMeta.field.name]||{}).text||'';
+      var oHit=pick(originMeta.field.dataSource||[],oText);
+      if(oHit)await set('产地',originMeta,oHit);
+      else if(oText)out.errors.push('产地无匹配枚举：'+oText);
+    }else if(want.origin&&want.origin!=='中国大陆')out.errors.push('产地字段未返回');
+    var originName=originMeta&&originMeta.field.name;
+    // 写产地会触发级联刷新，重新取一次「省份」字段（dataSource 可能是刚拉回来的）
+    var provMeta=find('省份',originName);
+    if(provMeta){
+      var existingP=(gcv(provMeta.store)||{})[provMeta.field.name];
+      var cands=[want.province,existingP&&existingP.text,want.fallback,'其他','其它'].filter(function(x,i,a){return x&&a.indexOf(x)===i;});
+      provMeta=find('省份',originName)||provMeta;
+      var pHit=null;
+      for(var i=0;i<cands.length&&!pHit;i++)pHit=pick(provMeta.field.dataSource||[],cands[i]);
+      if(pHit)await set('省份',provMeta,pHit);
+      else if(!valid(provMeta))out.errors.push('省份无匹配枚举：'+(cands.join('/')||'空'));
+      // 级联可能把值冲掉：再写一次
+      if(pHit&&!valid(provMeta))await set('省份',provMeta,pHit);
+      out.province={name:provMeta.field.name,required:!!provMeta.field.required,text:(gcv(provMeta.store)||{})[provMeta.field.name]&&(gcv(provMeta.store)||{})[provMeta.field.name].text||''};
+    }else if(want.province&&want.province!=='其他'){out.errors.push('省份字段未返回');}
+    var cityMeta=find('城市',provMeta&&provMeta.field.name)||find('地市',provMeta&&provMeta.field.name);
+    if(cityMeta&&want.city){
+      var cHit=pick(cityMeta.field.dataSource||[],want.city);
+      if(cHit)await set(cityMeta.field.label||'城市',cityMeta,cHit);
+      else out.errors.push('城市无匹配枚举：'+want.city);
+    }
+    var provAfter=find('省份',originName);
+    if(provAfter&&provAfter.field.required&&!valid(provAfter))out.errors.push('省份回读不是有效选项');
+    out.ok=!out.errors.length;
+    return JSON.stringify(out);
+  }catch(e){out.errors.push(String(e&&e.message||e));return JSON.stringify(out);}
 })()`;
 }
 
@@ -4408,6 +4629,40 @@ function buildWriteMainImagesScript(urls) {
 }
 
 /**
+ * 主图重排：只调整顺序/剔除多余图，**复用组件里已有的图片对象**。
+ * 2026-11-25 现场：素材中心已把 5 张正确绑定，我们又用自造的
+ * {url,width,height,pix,name} 整组覆盖，回读「一样」，但提交报「1:1主图填写错误」——
+ * 平台校验要的是它自己上传时生成的对象（带内部字段）。
+ */
+function buildRebindMainImagesScript(urls) {
+  const want = (Array.isArray(urls) ? urls : []).slice(0, 5).map(u => String(u || ''));
+  return `(async function(){
+  var want=${JSON.stringify(want)};
+  var st=window.__SELL_STATE__&&window.__SELL_STATE__.getState&&window.__SELL_STATE__.getState();
+  if(!st||!st.engine)return JSON.stringify({ok:false,reason:'no-engine'});
+  var eng=st.engine;
+  function base(u){return String(u||'').split('?')[0];}
+  var cur=(st.getComponentValue('mainImagesGroup')||{}).images||[];
+  var out=[],missing=[];
+  for(var i=0;i<want.length;i++){
+    var w=base(want[i]);
+    var hit=cur.find(function(x){return base(x&&x.url)===w;});
+    if(hit)out.push(hit);else missing.push(want[i]);
+  }
+  if(missing.length)return JSON.stringify({ok:false,reason:'not-bound',missing:missing.length,total:want.length});
+  if(out.length===cur.length&&out.every(function(x,i){return base(x&&x.url)===base(cur[i]&&cur[i].url);})){
+    return JSON.stringify({ok:true,count:out.length,total:want.length,unchanged:true,order:out.map(function(x){return x.url;})});
+  }
+  var comp=eng.getComponent&&eng.getComponent('mainImagesGroup');
+  if(comp&&comp.setProps)comp.setProps(Object.assign({},st.getComponentProps('mainImagesGroup')||{},{value:{images:out},message:[]}));
+  eng.updateModels({formValues:Object.assign({},eng.getModels().formValues||{},{mainImagesGroup:{images:out}})});
+  var actual=(st.getComponentValue('mainImagesGroup')||{}).images||[];
+  var same=actual.length===out.length&&actual.every(function(x,i){return base(x&&x.url)===base(out[i]&&out[i].url);});
+  return JSON.stringify({ok:same,count:actual.length,total:out.length,order:actual.map(function(x){return x&&x.url||'';})});
+})()`;
+}
+
+/**
  * SKU 图：老软件实测「skuMaterialImage 平台保存时不保留」，真正的规格图是
  * customSaleProp / saleProp 每个规格值上的 img（行 props[0].img 同步），SKU 搜索主图是 skuPicture。
  * 直接写图片地址，不上传；顺序 = 规格顺序。
@@ -5383,6 +5638,54 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
    * 现在：比例正好 3:4 的只缩放；不是正好 3:4 的按 contain 放进白底 1440×1920 画布，
    * 整张图完整保留（宁可两边留白，也不让平台裁掉内容）。
    */
+  /**
+   * 1:1 主图格式兜底：平台只收 png/jpeg/jpg/heic。
+   * 2026-11-25 现场：第 2 张被拒 —— CDN 上扩展名是 .jpg/.png，内容其实是 WebP。
+   * 这里只做「格式转换」（不裁剪、不补边），已经是 png/jpg 的原样不动。
+   */
+  async function convertMainToSupported(win, items, dir) {
+    const fs = require('node:fs/promises');
+    const path = require('node:path');
+    const crypto = require('node:crypto');
+    await fs.mkdir(dir, { recursive: true });
+    const out = [];
+    for (const item of items) {
+      if (!item?.file) { out.push(item); continue; }
+      try {
+        const buf = await fs.readFile(item.file);
+        const info = imageHeaderSize(buf);
+        const fmt = String(info?.fmt || '').toLowerCase();
+        if (fmt === 'png' || fmt === 'jpg' || fmt === 'jpeg') { out.push(item); continue; }
+        let converted = null;
+        try {
+          const nativeImage = electron?.nativeImage;
+          if (nativeImage?.createFromBuffer) {
+            const image = nativeImage.createFromBuffer(buf);
+            if (image && !image.isEmpty?.()) {
+              const size = image.getSize();
+              const jpeg = image.toJPEG(92);
+              if (jpeg?.length) converted = { buf: jpeg, srcW: size?.width || info?.w, srcH: size?.height || info?.h };
+            }
+          }
+        } catch { converted = null; }
+        if (!converted) {
+          const mime = fmt === 'webp' ? 'image/webp' : fmt === 'gif' ? 'image/gif' : fmt === 'bmp' ? 'image/bmp' : 'image/webp';
+          const got = asJson(await win.webContents.executeJavaScript(
+            buildConvertToJpegScript(buf.toString('base64'), mime, { fit: '', w: 1440, h: 1440 }), true,
+          ).catch(() => null));
+          if (got?.ok && got.b64) converted = { buf: Buffer.from(got.b64, 'base64'), srcW: got.srcW, srcH: got.srcH };
+        }
+        if (!converted?.buf?.length) { out.push(item); continue; }
+        const file = path.join(dir, `${crypto.createHash('sha1').update(converted.buf).digest('hex')}.jpg`);
+        await fs.writeFile(file, converted.buf);
+        out.push({ ...item, file, jpegFrom: fmt || 'unknown', jpegSrc: `${converted.srcW || '?'}x${converted.srcH || '?'}` });
+      } catch {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
   async function convertTallToJpeg(win, items, dir) {
     const fs = require('node:fs/promises');
     const path = require('node:path');
@@ -5892,9 +6195,14 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
   async function openMediaDrawer(win, group, maxPoints = 5) {
     const raw = asJson(await evalJs(win, buildImageEntryPointsScript(group), 12000));
     if (!raw?.ok) return { ok: false, reason: 'no-entry-point' };
-    for (const pt of raw.points.slice(0, Math.max(1, maxPoints))) {
+    const points = raw.points.slice(0, Math.max(1, maxPoints));
+    for (let index = 0; index < points.length; index += 1) {
+      const pt = points[index];
       await cdpXY(win, pt.x, pt.y);
-      for (let i = 0; i < 8; i++) {
+      // 素材中心是跨域 iframe，第一次打开要下载整个选择器（老软件这里等 15 秒）。
+      // 之前只等 2.4 秒就判 drawer-not-open，1:1/透明/3:4 全部误判失败（2026-11-25 日志）。
+      const budget = index === 0 ? 40 : 12;   // 300ms × N：首个 12 秒，后续 3.6 秒
+      for (let i = 0; i < budget; i++) {
         await sleep(300);
         if (await mediaPopupOpen(win)) return { ok: true, point: pt };
       }
@@ -6065,9 +6373,17 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     try {
       const dbg = win.webContents.debugger;
       try { dbg.attach('1.3'); } catch { /* 已附着 */ }
-      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(x), y: Math.round(y) });
-      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
-      await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
+      // 页面卡死时 CDP 命令可能永远不返回（2026-11-25 两次 180 秒被看门狗中断就是这个原因），
+      // 每次点击最多等 4 秒，超时就当这一步失败，让流程继续走兜底，而不是把整条队列挂住。
+      const send = async params => {
+        const run = Promise.resolve().then(() => dbg.sendCommand('Input.dispatchMouseEvent', params));
+        const value = await Promise.race([run, sleep(4000).then(() => '__cdp_timeout__')]);
+        if (value === '__cdp_timeout__') throw new Error('cdp-timeout');
+        return value;
+      };
+      await send({ type: 'mouseMoved', x: Math.round(x), y: Math.round(y) });
+      await send({ type: 'mousePressed', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
+      await send({ type: 'mouseReleased', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
       return true;
     } catch { return false; }
   }
@@ -6269,7 +6585,13 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     const assetSrc = new Map();
     for (const needle of needles) {
       // 先按文件名读卡片地址（不要求多选框）：3:4 / 透明素材图的素材器是单选卡片，没有 checkbox。
-      const card = JSON.parse((await evalFrame(frame, buildFindAssetCardScript(needle))) || 'null');
+      // 刚上传的卡片可能还没渲染出来（2026-11-25 透明素材图 card-not-found）：给 3 次机会。
+      let card = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        card = JSON.parse((await evalFrame(frame, buildFindAssetCardScript(needle))) || 'null');
+        if (card?.ok && /^https?:/i.test(String(card.url || ''))) break;
+        if (attempt < 2) await sleep(1200);
+      }
       if (card?.ok && /^https?:/i.test(String(card.url || ''))) {
         assetSrc.set(needle, normalizeMaterialUrl(card.url));
         pickedSet.add(needle);
@@ -6321,6 +6643,7 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
     // 这条流改成「只回读 + 直接写素材地址」，不点卡片。
     let nullReads = 0;
     const maxRounds = opts.skipCardClick ? 2 : 4;
+    if (opts.skipCardClick) emit(`[fill-images] ${label}：已勾选 ${pickedSet.size} 张，跳过点图回填，直接点「确定」提交选择（点卡片会让平台整页卡死）`);
     for (let round = 0; round < maxRounds; round++) {
       if (!opts.skipCardClick && (round === 0 || round === 3)) {
         for (const needle of needles) {
@@ -7610,6 +7933,28 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       }
 
       step('填写属性');
+      // 老软件实测：发布页 schema 是 9→11→12 渐进加载，「省份」最后一档才渲染；不等它就开始填，
+      // 省份会读不到（no-other-option）。最多等 6 秒，页面没有这个字段也不会卡住。
+      for (let waitSchema = 0; waitSchema < 12; waitSchema += 1) {
+        const hasProvince = await evalJs(win, '(function(){try{return /省份/.test(document.body.innerText||"")}catch(e){return false}})()', 4000);
+        if (hasProvince === true) break;
+        // 老软件（亿突破 navigation.js:1818）：每轮幂等写「产地=中国大陆 p-21299」触发 schema 继续加载，
+        // 「省份」是最后一档，产地模型没值就不渲染。
+        if (waitSchema > 0) {
+          await evalJs(win, `(function(){try{
+            var st=window.__SELL_STATE__&&window.__SELL_STATE__.getState&&window.__SELL_STATE__.getState();
+            if(!st||!st.updateModels||!st.getComponentValue)return 'no-engine';
+            var fv=st.getComponentValue('itemProp')||{};
+            var cur=fv['p-21299'];
+            if(cur&&(cur.value||cur.text))return 'has-origin';
+            var nv=Object.assign({},fv);
+            nv['p-21299']={value:27772,text:'中国大陆'};
+            st.updateModels({formValues:nv});
+            return 'origin-written';
+          }catch(e){return 'err';}})()`, 4000);
+        }
+        await sleep(500);
+      }
       // ③ 属性 + 组件填充：一次走 fillFormScript（纯文本 / next-select / 单选多选 都能落）
       const skusForBase = (Array.isArray(draft?.skus) ? draft.skus : Array.isArray(listing.skus) ? listing.skus : [])
         .filter(s => s && s.name && !s.removed);
@@ -7619,14 +7964,28 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       ].filter((a, i, all) => a && a.name && a.value
         && !/^(?:品牌|品牌名称|brand|商标)$/i.test(String(a.name).trim())
         && all.findIndex(x => x && x.name === a.name) === i);
+      // 净含量这类「数字 + 单位」字段要拆开写：整串「500g」写进数字框会报「输入值 "g" 错误」
+      //（用户 2026-11-25 现场：产品净含量）。只处理这几个字段名，其它属性保持原样。
+      const NET_CONTENT_RE = /^(?:产品净含量|单件净含量|总净含量|净含量|净重)$/;
+      const netTargets = [];
+      for (const a of [...attrs, ...(Array.isArray(input.hints) ? input.hints : [])]) {
+        const name = String(a?.name || '').trim();
+        if (!NET_CONTENT_RE.test(name)) continue;
+        if (netTargets.some(t => t.name === name)) continue;
+        const raw = String(a?.value || '').trim();
+        const num = (raw.match(/\d+(?:\.\d+)?/) || [])[0] || '';
+        if (!num) continue;
+        const unitRaw = (raw.match(/(kg|千克|公斤|g|克|ml|毫升|升|l)/i) || [])[1] || '';
+        netTargets.push({ name, num, unit: normalizeNetUnit(unitRaw) });
+      }
       const formPairs = [
-        ...attrs,
+        ...attrs.filter(a => !NET_CONTENT_RE.test(String(a?.name || '').trim())),
         // 单 SKU 维度的必填：一口价/商品数量/商家编码（新版页面就这几项是纯文本必填）
         ...(skusForBase.length ? [
           { name: '一口价', value: String(skusForBase[0].price || '').replace(/[^\d.]/g, '') },
           { name: '商品数量', value: '1000' },
         ].filter(x => x.value) : []),
-        ...(Array.isArray(input.hints) ? input.hints.map(h => ({ name: h.name, value: h.value })) : []),
+        ...(Array.isArray(input.hints) ? input.hints.map(h => ({ name: h.name, value: h.value })).filter(h => !NET_CONTENT_RE.test(String(h?.name || '').trim())) : []),
       ].filter((a, i, all) => a && a.name && a.value && all.findIndex(x => x && x.name === a.name) === i);
       if (formPairs.length) {
         const r = asJson(await win.webContents.executeJavaScript(fillFormScript(formPairs), true).catch(() => null));
@@ -7635,14 +7994,45 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       } else {
         emit('[fill-attrs] 草稿里没有参数，跳过');
       }
+      if (netTargets.length) {
+        const nr = asJson(await evalJs(win, fillNetContentScript(netTargets), 15000));
+        if (nr?.filled?.length) emit(`[fill-attrs] 净含量：${nr.filled.map(f => `${f.name}=${f.num}${f.unit || ''}`).join('、')}`);
+        if (nr?.missed?.length) emit(`[fill-attrs] 净含量：未命中 ${nr.missed.slice(0, 3).join('、')}（数字与单位要分开填，提交前会再核一次）`);
+      }
       const provinceCandidates = provinceCandidatesFor(draft, detail, input.hints);
+      // 产地/省份/城市：给引擎写值用（老软件 buildGeographyScript 的入参）
+      const geoInput = (() => {
+        const attrOf = name => {
+          const pool = [
+            ...(Array.isArray(draft?.attrs) ? draft.attrs : []),
+            ...(Array.isArray(detail?.attributes) ? detail.attributes : []),
+            ...(Array.isArray(input.hints) ? input.hints : []),
+          ];
+          const hit = pool.find(a => String(a?.name || '').trim() === name);
+          return hit ? String(hit.value || '').trim() : '';
+        };
+        return {
+          origin: attrOf('产地') || '中国大陆',
+          province: provinceCandidates[0] || attrOf('省份') || '',
+          city: attrOf('城市') || attrOf('地市') || '',
+        };
+      })();
       {
-        const pv = await ensureProvince(win, provinceCandidates);
-        if (!pv?.skipped) {
-          if (pv?.ok && pv.already) emit(`[fill-province] 省份：页面已选「${pv.picked}」`);
-          else if (pv?.ok && pv.usedFallback) emit(`[fill-province] 省份：${provinceCandidates.length ? `未匹配到「${provinceCandidates[0]}」` : '采集参数无省份'}，已选择下拉框「${pv.picked || '其他'}」`);
-          else if (pv?.ok) emit(`[fill-province] 省份：已选择「${pv.picked}」`);
-          else emit(`[fill-province] ⚠ 省份未选上（${pv?.reason || 'unknown'}），提交前会再补选`);
+        // 先按老软件的做法，直接写引擎里的产地/省份/城市枚举（不依赖下拉是否加载出选项）
+        const geo = asJson(await evalJs(win, buildGeographyScript(geoInput), 20000));
+        if (geo?.ok && geo.province?.text) {
+          const wrote = (geo.fields || []).map(f => f.label).filter(Boolean);
+          emit(`[fill-province] 省份：${geo.province.text}（引擎枚举${wrote.length ? ` · 已写 ${wrote.join('、')}` : ''}）`);
+        } else {
+          const reason = (geo?.errors || []).slice(0, 2).join('；') || '引擎无匹配';
+          emit(`[fill-province] 引擎写省份未通过（${reason}），改点下拉`);
+          const pv = await ensureProvince(win, provinceCandidates);
+          if (!pv?.skipped) {
+            if (pv?.ok && pv.already) emit(`[fill-province] 省份：页面已选「${pv.picked}」`);
+            else if (pv?.ok && pv.usedFallback) emit(`[fill-province] 省份：${provinceCandidates.length ? `未匹配到「${provinceCandidates[0]}」` : '采集参数无省份'}，已选择下拉框「${pv.picked || '其他'}」`);
+            else if (pv?.ok) emit(`[fill-province] 省份：已选择「${pv.picked}」`);
+            else emit(`[fill-province] ⚠ 省份未选上（${pv?.reason || 'unknown'}），提交前会再补选`);
+          }
         }
       }
 
@@ -7687,7 +8077,14 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
         } else {
           const pname = skuProps[0]?.pname || '商品规格';
           const values = (skuProps[0]?.values || []).map(v => v.vname).filter(Boolean);
-          const targets = (values.length ? values : specNames).slice(0, 60);
+          // 老软件（亿突破）用 SKU 名直接建规格行；我们之前只用页面模板里的 14 个值，
+          // 草稿 46 条 SKU 里多出来的行根本没有对应行 → 数量 0（2026-11-25 用户截图）。
+          const uniqNames = [];
+          for (const raw of specNames) {
+            const name = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 128);
+            if (name && !uniqNames.includes(name)) uniqNames.push(name);
+          }
+          const targets = (uniqNames.length > values.length ? uniqNames : (values.length ? values : uniqNames)).slice(0, 60);
           // 1) 打开抽屉 + 选「单层展示」
           const opened = asJson(await win.webContents.executeJavaScript(openSpecDrawerScript(), true).catch(() => null));
           if (!opened?.ok) {
@@ -7708,7 +8105,10 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       const skus = skusForBase;
       if (skus.length) {
         const r = asJson(await win.webContents.executeJavaScript(fillSkuScript(skus), true).catch(() => null));
-        emit(`[fill-sku] 填充 SKU ${r?.done || 0}/${r?.total || skus.length} 条${r?.missed?.length ? '，未命中 ' + r.missed.slice(0, 3).join('、') : ''}${r?.gaps?.length ? `；必填缺口 ${r.gaps.slice(0, 4).join('、')}` : ''}`);
+        emit(`[fill-sku] 填充 SKU ${r?.done || 0}/${r?.total || skus.length} 条（页面 ${r?.containers ?? '?'} 行）${r?.missed?.length ? '，未命中 ' + r.missed.slice(0, 3).join('、') : ''}${r?.gaps?.length ? `；必填缺口 ${r.gaps.slice(0, 4).join('、')}` : ''}`);
+        if (r?.containers && r.containers < (r?.total || 0)) {
+          emit(`[fill-sku] ⚠ 页面只有 ${r.containers} 行、草稿有 ${r.total} 条规格：多出的 ${r.total - r.containers} 条没有对应行（需在发布页补建规格，或减少 SKU 模板条数）`);
+        }
         if (!r?.done) emit('[fill-sku] 提示：SKU 行还没生成，可在发布窗口手动点「创建规格」后重试');
       } else {
         emit('[fill-sku] 草稿与采集都没有规格，跳过');
@@ -7830,15 +8230,21 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       let packagingFile = '';
       if (imagePlan.square.length) {
         try {
-          const files = await prepareImageFiles(imagePlan.square, workDirImages, 'square');
+          const preparedMain = await prepareImageFiles(imagePlan.square, workDirImages, 'square');
+          // 平台 1:1 只收 png/jpeg/jpg/heic：CDN 上扩展名 jpg、内容 WebP 的第 2 张会被拒，
+          // 上传前统一转一次（只转格式，不裁剪不补边）。
+          const files = await convertMainToSupported(win, preparedMain, pathModule.join(workDirImages, 'main'));
           packagingFile = (files.find(f => f && f.file) || {}).file || '';
           const localFiles = files.filter(f => f.file).map(f => f.file);
-          emit(`[fill-images] 1:1主图：按图位准备 ${files.length} 张（${localFiles.length} 张可上传）`);
+          const convertedMain = files.filter(f => f.jpegFrom);
+          emit(`[fill-images] 1:1主图：按图位准备 ${files.length} 张（${localFiles.length} 张可上传${convertedMain.length ? ` · ${convertedMain.length} 张 ${Array.from(new Set(convertedMain.map(f => f.jpegFrom))).join('/')} 已转 JPEG（平台只收 png/jpg）` : ''}）`);
           let done = { ok: false, reason: 'no-file' };
           if (localFiles.length) {
             // 老软件主图就是走素材中心（点空图位 → 本地上传 → 勾选 → 确定）；
             // 先走它，原生选择框只做兜底 —— 反过来会白等 8 秒，还可能把原生框弹出来。
-            done = await uploadMainViaSucai(win, localFiles, '1:1主图');
+            // 2026-11-25 两次现场：点素材卡片回填时整个发布页无响应（180 秒被看门狗中断）。
+            // 多选素材器只要勾选 + 确定就能把图加到图位，不点卡片图片（那会打开平台的预览/编辑器）。
+            done = await uploadMainViaSucai(win, localFiles, '1:1主图', 'square', { skipCardClick: true });
             if (done.ok) emit(`[fill-images] 1:1主图：素材中心上传成功，回读 ${done.count} 张（勾选 ${done.picked} 个${done.unverified ? ' · 页面未提供回读' : ''}）`);
             else {
               emit(`[fill-images] 1:1主图：素材中心未通过（${done.reason}），改用文件选择器`);
@@ -7855,10 +8261,17 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
           let sync = null;
           const ownAssets = Array.isArray(done.assets) ? done.assets.filter(u => /^https?:\/\//i.test(String(u))) : [];
           if (done.ok && ownAssets.length === localFiles.length && localFiles.length > 0) {
-            const exact = asJson(await win.webContents.executeJavaScript(buildWriteMainImagesScript(ownAssets), true).catch(() => null));
+            // 素材中心已经绑好的图，只重排不重建（重建会丢平台内部字段 → 提交报「1:1主图填写错误」）
+            let exact = asJson(await evalJs(win, buildRebindMainImagesScript(ownAssets), 15000));
+            let via = 'rebind';
+            if (!exact?.ok) {
+              exact = asJson(await win.webContents.executeJavaScript(buildWriteMainImagesScript(ownAssets), true).catch(() => null));
+              via = 'write';
+            }
             if (exact?.ok) {
-              sync = { ok: true, engineAfter: exact.count, dom: exact.count, engineBefore: 0, exactAssets: true };
+              sync = { ok: true, engineAfter: exact.count, dom: exact.count, engineBefore: 0, exactAssets: true, rebind: exact.unchanged ? 'unchanged' : via };
               mainBoundSources = ownAssets.slice();
+              if (exact.unchanged) emit('[fill-images] 1:1主图：素材中心绑定与本次一致，不再重写组件（保留平台图片对象）');
             } else sync = { ok: false, reason: exact?.reason || 'exact-assets-rejected', dom: 0 };
           } else {
             sync = asJson(await win.webContents.executeJavaScript(buildSyncMainImagesScript(), true).catch(() => null));
@@ -7871,7 +8284,19 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
           }
           else {
             emit(`[fill-images] 1:1主图：引擎仍是 0 张（DOM ${sync?.dom || 0} 张，${sync?.reason || 'unknown'}），改为直接写主图地址`);
-            const urls = imagePlan.square.filter(u => /^https?:\/\//i.test(String(u))).slice(0, 5);
+            // 优先用本店图片空间地址（阿里 CDN，平台认）；没有接口权限才退回采集外链
+            let urls = [];
+            try {
+              if (localFiles.length && pictureSpace?.uploadMany) {
+                const up = await pictureSpace.uploadMany(localFiles, { titlePrefix: `主图-${detail.itemId || Date.now()}`, onLog: line => emit(String(line).slice(0, 160)) });
+                urls = (up?.uploaded || []).map(x => String(x?.url || '').trim()).filter(u => /^https?:\/\//i.test(u));
+                if (urls.length) emit(`[fill-images] 1:1主图：素材中心不可用，已转存本店图片空间 ${urls.length}/${localFiles.length} 张`);
+                else if (up && up.configured === false) emit(`[fill-images] 1:1主图：图片空间未配置（${up.note || '缺少 taobao.picture.upload'}），退回采集地址`);
+              }
+            } catch (error) {
+              emit(`[fill-images] 1:1主图：图片空间转存失败（${String(error?.message || error).slice(0, 80)}）`);
+            }
+            if (!urls.length) urls = imagePlan.square.filter(u => /^https?:\/\//i.test(String(u))).slice(0, 5);
             const w = urls.length ? asJson(await win.webContents.executeJavaScript(buildWriteMainImagesScript(urls), true).catch(() => null)) : null;
             if (w?.ok) {
               mainBoundSources = urls.slice();
@@ -7955,7 +8380,28 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
               : `[fill-images] 3:4主图：转存成功但组件写入失败（${r?.reason || 'unknown'}）`);
             if (r?.ok) tallBoundUrls = ownUrls.slice();
           } else if (localFiles.length) {
-            emit('[fill-images] 3:4主图：没能转存到本店素材中心，本组不写外链，保留仓库原 3:4 图');
+            // 素材中心抽屉打不开时，转存本店图片空间（同样是阿里 CDN，不是外链），再写组件
+            let spaceUrls = [];
+            try {
+              if (pictureSpace?.uploadMany) {
+                const up = await pictureSpace.uploadMany(localFiles, { titlePrefix: `3比4-${detail.itemId || Date.now()}`, onLog: line => emit(String(line).slice(0, 160)) });
+                spaceUrls = (up?.uploaded || []).map(x => String(x?.url || '').trim()).filter(u => /^https?:\/\//i.test(u));
+                emit(spaceUrls.length
+                  ? `[fill-images] 3:4主图：素材中心不可用，已转存本店图片空间 ${spaceUrls.length}/${localFiles.length} 张`
+                  : `[fill-images] 3:4主图：图片空间也没转成（${up?.note || '未配置或上传失败'}）`);
+              }
+            } catch (error) {
+              emit(`[fill-images] 3:4主图：图片空间转存失败（${String(error?.message || error).slice(0, 80)}）`);
+            }
+            if (spaceUrls.length) {
+              const r = asJson(await win.webContents.executeJavaScript(buildFillTallImagesScript(spaceUrls), true).catch(() => null));
+              emit(r?.ok
+                ? `[fill-images] 3:4主图：已用图片空间地址写入 ${r.count}/${r.total} 张（顺序以平台回读为准）`
+                : `[fill-images] 3:4主图：图片空间地址写入失败（${r?.reason || 'unknown'}）`);
+              if (r?.ok) tallBoundUrls = spaceUrls.slice();
+            } else {
+              emit('[fill-images] 3:4主图：没能转存到本店素材中心，本组不写外链，保留仓库原 3:4 图');
+            }
           } else {
             emit('[fill-images] 3:4主图：本机文件准备失败，本组不提交');
           }
@@ -7967,7 +8413,8 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
           await sleep(1200);
           let finalMain = null;
           for (let attempt = 0; attempt < 2; attempt++) {
-            finalMain = asJson(await win.webContents.executeJavaScript(buildWriteMainImagesScript(mainBoundSources), true).catch(() => null));
+            finalMain = asJson(await evalJs(win, buildRebindMainImagesScript(mainBoundSources), 15000));
+            if (!finalMain?.ok) finalMain = asJson(await win.webContents.executeJavaScript(buildWriteMainImagesScript(mainBoundSources), true).catch(() => null));
             if (finalMain?.ok) break;
             await sleep(800);
           }
@@ -8125,7 +8572,12 @@ function createPublishDriver({ electron, partitionForStore, log, pictureSpace, d
       // ⑩ 提交前自检：把真正拦路项列成人话并就地补救，不再让静态提示冒充失败原因
       // [presubmit-province] 提交前再核对一次 * 省份（防止重渲染被清空或未触发）：无省份/无匹配时选「其他」
       {
-        const pv2 = await ensureProvince(win, provinceCandidates);
+        // 先引擎再 DOM：重渲染会把下拉值清掉，引擎写更稳
+        const geo2 = asJson(await evalJs(win, buildGeographyScript(geoInput), 20000));
+        if (geo2?.ok && geo2.province?.text) {
+          emit(`[presubmit-province] 省份已补选「${geo2.province.text}」（引擎枚举）`);
+        }
+        const pv2 = (geo2?.ok && geo2.province?.text) ? { ok: true, already: true, picked: geo2.province.text } : await ensureProvince(win, provinceCandidates);
         if (!pv2?.skipped && !pv2?.already) {
           emit(pv2?.ok
             ? `[presubmit-province] 省份已补选「${pv2.picked || '其他'}」${pv2.usedFallback ? '（下拉兜底）' : ''}`
@@ -8550,7 +9002,7 @@ module.exports = {
     probeScript, fillTitleScript, fillBrandScript, fillAttrsScript, fillSkuScript,
     fillNamedScript, fillRequiredGapsScript, fillSmartScript, fillFormScript, fillSkuSearchTitleScript, selectSkuSpecsScript,
     collapseAssistantScript, fillMultiBuyScript, createSkuSpecsScript, selectBrandFirstScript, fillSampleAndMultiBuyScript,
-    fillShelfLifeScript, focusDiscountScript, readExtraScript,
+    fillShelfLifeScript, focusDiscountScript, readExtraScript, buildGeographyScript, fillNetContentScript,
     openShopCategoryScript, readShopCategoryScript, pickShopCategoryScript, readShopCategoryOptionsScript,
     readBrandScript, readSampleScript, fillFoodSafetyScript,
     fillGuideTitleScript, fillSeriesScript, fillSampleItemScript, closeCategoryDialogScript,
@@ -8559,7 +9011,7 @@ module.exports = {
     openSpecDrawerScript, fillSpecValuesScript, focusSpecInputScript, confirmSpecDrawerScript, clickSubmitScript, clickSubmitDomScript, submitStateScript,
     confirmWarehouseRadioScript, submitStallDiagScript,
     clickUploadTriggerScript, confirmUploadDialogScript,
-    buildReadImageGroupScript, buildFindUploadInputScript, buildOpenImageEntryScript,
+    buildReadImageGroupScript, buildFindUploadInputScript, buildOpenImageEntryScript, buildRebindMainImagesScript,
     buildSyncMainImagesScript, buildWriteMainImagesScript, buildMakeSquarePngScript, buildConvertToJpegScript, buildWhiteBgDiagScript, buildWriteGuideImageScript,
     buildVerifyGuideImageScript, buildSyncGuideImageFromDomScript,
     buildFillTallImagesScript, buildFillSkuImageUrlsScript,
